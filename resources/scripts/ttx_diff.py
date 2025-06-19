@@ -34,28 +34,29 @@ JSON:
     is the command that was used to run that compiler.
 """
 
-from collections import defaultdict
-from absl import app
-from absl import flags
-from lxml import etree
-from pathlib import Path
 import json
+import os
 import shutil
 import subprocess
 import sys
-import os
+import time
 import yaml
-from urllib.parse import urlparse
+
+from absl import app
+from absl import flags
 from cdifflib import CSequenceMatcher as SequenceMatcher
+from collections import defaultdict
 from contextlib import contextmanager
+from fontTools.designspaceLib import DesignSpaceDocument
+from fontTools.misc.fixedTools import otRound
+from fontTools.ttLib import TTFont
+from fontTools.varLib.iup import iup_delta
+from glyphsLib import GSFont
+from lxml import etree
+from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Any, Dict, Generator, List, Optional, Sequence, Tuple
-from glyphsLib import GSFont
-from fontTools.designspaceLib import DesignSpaceDocument
-from fontTools.varLib.iup import iup_delta
-from fontTools.ttLib import TTFont
-from fontTools.misc.fixedTools import otRound
-import time
+from urllib.parse import urlparse
 
 
 _COMPARE_DEFAULTS = "default"
