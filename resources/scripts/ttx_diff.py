@@ -146,6 +146,11 @@ def to_xml_string(e) -> str:
     return xml
 
 
+#==================================================================================================
+# Running commands
+#==================================================================================================
+
+
 # execute a command after logging it to stderr.
 # All additional kwargs are passed to subprocess.run
 def log_and_run(cmd: Sequence, cwd=None, **kwargs):
@@ -221,6 +226,11 @@ def try_normalizer(normalizer_bin: Path, font_file: Path, out_path: Path, table:
             return ""
     with open(out_path) as f:
         return f.read()
+
+
+#==================================================================================================
+# Building fonts
+#==================================================================================================
 
 
 class BuildFail(Exception):
@@ -411,6 +421,11 @@ def source_is_variable(path: Path) -> bool:
 def copy(old, new):
     shutil.copyfile(old, new)
     return new
+
+
+#==================================================================================================
+# Normalizing tables
+#==================================================================================================
 
 
 def get_name_to_id_map(ttx: etree.ElementTree):
@@ -960,6 +975,11 @@ def reduce_diff_noise(fontc: etree.ElementTree, fontmake: etree.ElementTree):
     allow_some_off_by_ones(
         fontc, fontmake, "gvar/glyphVariations", "glyph", "/tuple/delta"
     )
+
+
+#==================================================================================================
+# Generating output
+#==================================================================================================
 
 
 # given a font file, return a dictionary of tags -> size in bytes
