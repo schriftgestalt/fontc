@@ -21,7 +21,7 @@ JSON:
     "success", which will contain a dictionary, where keys are the tags of tables
     (or another identifier) and the value is either a float representing the
     'difference ratio' (where 1.0 means identical and 0.0 means maximally
-   dissimilar) or, if only one compiler produced that table, the name of that
+    dissimilar) or, if only one compiler produced that table, the name of that
     compiler as a string.
     For example, the output `{"success": { "GPOS": 0.99, "vmxt": "fontmake" }}`
     means that the "GPOS" table was 99% similar, and only `fontmake` produced
@@ -64,11 +64,13 @@ _COMPARE_GFTOOLS = "gftools"
 # environment variable used by GFTOOLS
 GFTOOLS_FONTC_PATH = "GFTOOLS_FONTC_PATH"
 
-
 FLAGS = flags.FLAGS
+
 # used instead of a tag for the normalized mark/kern output
 MARK_KERN_NAME = "(mark/kern)"
+
 LIG_CARET_NAME = "ligcaret"
+
 # maximum chars of stderr to include when reporting errors; prevents
 # too much bloat when run in CI
 MAX_ERR_LEN = 1000
