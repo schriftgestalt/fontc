@@ -1003,83 +1003,93 @@ def get_table_sizes(fontfile: Path) -> dict[str, int]:
 
 # return a dict of table tag  -> size difference
 # only when size difference exceeds some threshold
-def check_sizes(fontmake_ttf: Path, fontc_ttf: Path):
+def check_sizes(old_font_file: Path, new_font_file: Path):
     THRESHOLD = 1 / 10
-    fontmake = get_table_sizes(fontmake_ttf)
-    fontc = get_table_sizes(fontc_ttf)
+    old_sizes = get_table_sizes(old_font_file)
+    new_sizes = get_table_sizes(new_font_file)
 
     output = dict()
-    shared_keys = set(fontmake.keys() & fontc.keys())
+    shared_keys = set(old_sizes.keys() & new_sizes.keys())
 
     for key in shared_keys:
-        fontmake_len = fontmake[key]
-        fontc_len = fontc[key]
-        if fontc_len < fontmake_len:
+        old_len = old_sizes[key]
+        new_len = new_sizes[key]
+        if new_len < old_len:
             continue
-        len_ratio = min(fontc_len, fontmake_len) / max(fontc_len, fontmake_len)
+        len_ratio = min(new_len, old_len) / max(new_len, old_len)
         if (1 - len_ratio) > THRESHOLD:
-            rel_len = fontc_len - fontmake_len
-            eprint(f"{key} {fontmake_len} {fontc_len} {len_ratio:.3} {rel_len}")
+            rel_len = new_len - old_len
+            eprint(f"{key} {old_len} {new_len} {len_ratio:.3} {rel_len}")
             output[key] = rel_len
     return output
 
 
 # returns a dictionary of {"compiler_name":  {"tag": "xml_text"}}
 def generate_output(
-    build_dir: Path, otl_norm_bin: Path, fontmake_ttf: Path, fontc_ttf: Path
+    build_dir: Path,
+    otl_norm_bin: Path,
+    old_tool_name: str,
+    old_font_file: Path,
+    new_tool_name: str,
+    new_font_file: Path
 ):
-    fontc_ttx = run_ttx(fontc_ttf)
-    fontmake_ttx = run_ttx(fontmake_ttf)
-    fontc_gpos = run_normalizer(otl_norm_bin, fontc_ttf, "gpos")
-    fontmake_gpos = run_normalizer(otl_norm_bin, fontmake_ttf, "gpos")
-    fontc_gdef = run_normalizer(otl_norm_bin, fontc_ttf, "gdef")
-    fontmake_gdef = run_normalizer(otl_norm_bin, fontmake_ttf, "gdef")
+    new_ttx = run_ttx(new_font_file)
+    old_ttx = run_ttx(old_font_file)
+    new_gpos = run_normalizer(otl_norm_bin, new_font_file, "gpos")
+    old_gpos = run_normalizer(otl_norm_bin, old_font_file, "gpos")
+    new_gdef = run_normalizer(otl_norm_bin, new_font_file, "gdef")
+    old_gdef = run_normalizer(otl_norm_bin, old_font_file, "gdef")
 
-    fontc = etree.parse(fontc_ttx)
-    fontmake = etree.parse(fontmake_ttx)
-    fill_in_gvar_deltas(fontc, fontc_ttf, fontmake, fontmake_ttf)
-    reduce_diff_noise(fontc, fontmake)
+    new_tree = etree.parse(new_ttx)
+    old_tree = etree.parse(old_ttx)
+    fill_in_gvar_deltas(new_tree, new_font_file, old_tree, old_font_file)
+    reduce_diff_noise(new_tree, old_tree)
 
-    fontc = extract_comparables(fontc, build_dir, FONTC_NAME)
-    fontmake = extract_comparables(fontmake, build_dir, FONTMAKE_NAME)
-    size_diffs = check_sizes(fontmake_ttf, fontc_ttf)
-    fontc[MARK_KERN_NAME] = fontc_gpos
-    fontmake[MARK_KERN_NAME] = fontmake_gpos
-    if len(fontc_gdef):
-        fontc[LIG_CARET_NAME] = fontc_gdef
-    if len(fontmake_gdef):
-        fontmake[LIG_CARET_NAME] = fontmake_gdef
-    result = {FONTC_NAME: fontc, FONTMAKE_NAME: fontmake}
+    new_map = extract_comparables(new_tree, build_dir, new_tool_name)
+    old_map = extract_comparables(old_tree, build_dir, old_tool_name)
+    size_diffs = check_sizes(old_font_file, new_font_file)
+    new_map[MARK_KERN_NAME] = new_gpos
+    old_map[MARK_KERN_NAME] = old_gpos
+    if len(new_gdef):
+        new_map[LIG_CARET_NAME] = new_gdef
+    if len(old_gdef):
+        old_map[LIG_CARET_NAME] = old_gdef
+    result = {new_tool_name: new_map, old_tool_name: old_map}
     if len(size_diffs) > 0:
         result["sizes"] = size_diffs
 
     return result
 
 
-def print_output(build_dir: Path, output: dict[str, dict[str, Any]]):
-    fontc = output[FONTC_NAME]
-    fontmake = output[FONTMAKE_NAME]
+def print_output(
+    build_dir: Path,
+    output: dict[str, dict[str, Any]],
+    old_tool_name: str,
+    new_tool_name: str
+):
+    new_map = output[new_tool_name]
+    old_map = output[old_tool_name]
     print("COMPARISON")
-    t1 = set(fontc.keys())
-    t2 = set(fontmake.keys())
+    t1 = set(new_map.keys())
+    t2 = set(old_map.keys())
     if t1 != t2:
         if t1 - t2:
             tags = ", ".join(f"'{t}'" for t in sorted(t1 - t2))
-            print(f"  Only fontc produced {tags}")
+            print(f"  Only {new_tool_name} produced {tags}")
 
         if t2 - t1:
             tags = ", ".join(f"'{t}'" for t in sorted(t2 - t1))
-            print(f"  Only fontmake produced {tags}")
+            print(f"  Only {old_tool_name} produced {tags}")
 
     for tag in sorted(t1 & t2):
-        t1s = fontc[tag]
-        t2s = fontmake[tag]
+        t1s = new_map[tag]
+        t2s = old_map[tag]
         if t1s == t2s:
             print(f"  Identical '{tag}'")
         else:
             difference = diff_ratio(t1s, t2s)
-            p1 = build_dir / path_for_output_item(tag, FONTC_NAME)
-            p2 = build_dir / path_for_output_item(tag, FONTMAKE_NAME)
+            p1 = build_dir / path_for_output_item(tag, new_tool_name)
+            p2 = build_dir / path_for_output_item(tag, old_tool_name)
             print(f"  DIFF '{tag}', {p1} {p2} ({difference:.3%})")
     if output.get("sizes"):
         print("SIZE DIFFERENCES")
@@ -1087,24 +1097,28 @@ def print_output(build_dir: Path, output: dict[str, dict[str, Any]]):
         print(f"SIZE DIFFERENCE: '{tag}': {diff}B")
 
 
-def jsonify_output(output: dict[str, dict[str, Any]]):
-    fontc = output[FONTC_NAME]
-    fontmake = output[FONTMAKE_NAME]
+def jsonify_output(
+    output: dict[str, dict[str, Any]],
+    old_tool_name: str,
+    new_tool_name: str
+):
+    new_map = output[new_tool_name]
+    old_map = output[old_tool_name]
     sizes = output.get("sizes", {})
-    all_tags = set(fontc.keys()) | set(fontmake.keys())
+    all_tags = set(new_map.keys()) | set(old_map.keys())
     out = dict()
     same_lines = 0
     different_lines = 0
     for tag in all_tags:
-        if tag not in fontc:
-            different_lines += len(fontmake[tag])
-            out[tag] = FONTMAKE_NAME
-        elif tag not in fontmake:
-            different_lines += len(fontc[tag])
-            out[tag] = FONTC_NAME
+        if tag not in new_map:
+            different_lines += len(old_map[tag])
+            out[tag] = old_tool_name
+        elif tag not in old_map:
+            different_lines += len(new_map[tag])
+            out[tag] = new_tool_name
         else:
-            s1 = fontc[tag]
-            s2 = fontmake[tag]
+            s1 = new_map[tag]
+            s2 = old_map[tag]
             if s1 != s2:
                 ratio = diff_ratio(s1, s2)
                 n_lines = max(len(s1), len(s2))
@@ -1208,15 +1222,21 @@ def resolve_source(source: str) -> Path:
     return source
 
 
-def delete_things_we_must_rebuild(rebuild: str, fontmake_ttf: Path, fontc_ttf: Path):
-    for tool, ttf_path in [(FONTMAKE_NAME, fontmake_ttf), (FONTC_NAME, fontc_ttf)]:
+def delete_things_we_must_rebuild(
+    rebuild: str, 
+    old_tool_name: str, 
+    old_font_file: Path, 
+    new_tool_name: str, 
+    new_font_file: Path
+):
+    for tool, font_file_path in [(old_tool_name, old_font_file), (new_tool_name, new_font_file)]:
         must_rebuild = rebuild in [tool, "both"]
         if must_rebuild:
             for path in [
-                ttf_path,
-                ttf_path.with_suffix(".ttx"),
-                ttf_path.with_suffix(".markkern.txt"),
-                ttf_path.with_suffix(".ligcaret.txt"),
+                font_file_path,
+                font_file_path.with_suffix(".ttx"),
+                font_file_path.with_suffix(".markkern.txt"),
+                font_file_path.with_suffix(".ligcaret.txt"),
             ]:
                 if path.exists():
                     os.remove(path)
@@ -1278,7 +1298,13 @@ def main(argv):
 
     # we delete all resources that we have to rebuild. The rest of the script
     # will assume it can reuse anything that still exists.
-    delete_things_we_must_rebuild(FLAGS.rebuild, fontmake_ttf, fontc_ttf)
+    delete_things_we_must_rebuild(
+        FLAGS.rebuild,
+        old_tool_name,
+        old_font_file,
+        new_tool_name,
+        new_font_file
+    )
 
     try:
         if compare == _COMPARE_DEFAULT:
@@ -1286,17 +1312,18 @@ def main(argv):
         else:
             run_gftools(source, FLAGS.config, build_dir, fontc_bin=fontc_bin_path)
     except BuildFail as e:
-        failures[FONTC_NAME] = {
+        failures[new_tool_name] = {
             "command": " ".join(e.command),
             "stderr": e.msg[-MAX_ERR_LEN:],
         }
+
     try:
         if compare == _COMPARE_DEFAULT:
             build_fontmake(source, build_dir)
         else:
             run_gftools(source, FLAGS.config, build_dir)
     except BuildFail as e:
-        failures[FONTMAKE_NAME] = {
+        failures[old_tool_name] = {
             "command": " ".join(e.command),
             "stderr": e.msg[-MAX_ERR_LEN:],
         }
@@ -1304,18 +1331,25 @@ def main(argv):
     report_errors_and_exit_if_there_were_any(failures)
 
     # if compilation completed, these exist
-    assert fontmake_ttf.is_file(), fontmake_ttf
-    assert fontc_ttf.is_file(), fontc_ttf
+    assert old_font_file.is_file(), old_font_file
+    assert new_font_file.is_file(), new_font_file
 
-    output = generate_output(build_dir, otl_bin_path, fontmake_ttf, fontc_ttf)
-    if output[FONTC_NAME] == output[FONTMAKE_NAME]:
+    output = generate_output(
+        build_dir,
+        otl_bin_path,
+        old_tool_name,
+        old_font_file,
+        new_tool_name,
+        new_font_file
+    )
+    if output[new_tool_name] == output[old_tool_name]:
         eprint("output is identical")
     else:
         diffs = True
         if not FLAGS.json:
-            print_output(build_dir, output)
+            print_output(build_dir, output, old_tool_name, new_tool_name)
         else:
-            output = jsonify_output(output)
+            output = jsonify_output(output, old_tool_name, new_tool_name)
             print_json(output)
 
     sys.exit(diffs * 2)  # 0 or 2
