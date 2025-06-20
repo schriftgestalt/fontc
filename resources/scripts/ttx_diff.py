@@ -47,10 +47,12 @@ from absl import flags
 from cdifflib import CSequenceMatcher as SequenceMatcher
 from collections import defaultdict
 from contextlib import contextmanager
+from enum import IntEnum
 from fontTools.designspaceLib import DesignSpaceDocument
 from fontTools.misc.fixedTools import otRound
 from fontTools.ttLib import TTFont
 from fontTools.varLib.iup import iup_delta
+from Foundation import NSConnection, NSDistantObject, NSObject, NSURL
 from glyphsLib import GSFont
 from lxml import etree
 from pathlib import Path
@@ -61,6 +63,7 @@ from urllib.parse import urlparse
 
 _COMPARE_DEFAULT = "default"
 _COMPARE_GFTOOLS = "gftools"
+_COMPARE_GLYPHS_APP = "glyphs_app"
 
 FONTC_NAME = "fontc"
 FONTMAKE_NAME = "fontmake"
@@ -109,8 +112,8 @@ flags.DEFINE_string(
 flags.DEFINE_enum(
     "compare",
     "default",
-    [_COMPARE_DEFAULT, _COMPARE_GFTOOLS],
-    "Compare results using either a default build or a build managed by gftools. Note that as of 5/21/2023 default still sets flags for fontmake to match fontc behavior.",
+    [_COMPARE_DEFAULT, _COMPARE_GFTOOLS, _COMPARE_GLYPHS_APP],
+    "Compare results using either a default build, a build managed by gftools, or versions 3 and 4 of Glyphs. Note that as of 5/21/2023 default still sets flags for fontmake to match fontc behavior.",
 )
 flags.DEFINE_enum(
     "rebuild",
@@ -425,6 +428,106 @@ def source_is_variable(path: Path) -> bool:
 def copy(old, new):
     shutil.copyfile(old, new)
     return new
+
+
+#===============================================================================
+# Building fonts with Glyphs.app
+#===============================================================================
+
+
+class GlyphsVersion(IntEnum):
+    v3 = 3
+    v4 = 4
+
+GLYPHS_4_NAME = "glyphs_4"
+GLYPHS_3_NAME = "glyphs_3"
+
+# Maximum number of tries to establish a JSTalk connection to Glyphs.app.
+MAX_CONNECTION_TRIES = 10
+
+
+# This function has been adapted from `Glyphs remote scripts/Glyphs.py`
+# in the `https://github.com/schriftgestalt/GlyphsSDK` repository.
+def application(glyphsVersion):
+    os.system(f"open -a 'Glyphs {glyphsVersion}'")
+
+    port = f"com.GeorgSeifert.Glyphs{glyphsVersion}"
+    conn = None
+    tries = 1
+
+    print(f"Looking for a JSTalk connection to Glyphs {glyphsVersion}")
+    while ((conn is None) and (tries < MAX_CONNECTION_TRIES)):
+        conn = NSConnection.connectionWithRegisteredName_host_(port, None)
+        tries = tries + 1
+
+        if (not conn):
+            print(f"Could not find connection, trying again ({tries} of {MAX_CONNECTION_TRIES})")
+            time.sleep(1)
+
+    if (not conn):
+        print(f"Failed to find a JSTalk connection to Glyphs {glyphsVersion}")
+        return None
+
+    return conn.rootProxy()
+
+
+# This function has been adapted from `Glyphs remote scripts/testExternal.py`
+# in the `https://github.com/schriftgestalt/GlyphsSDK` repository.
+def exportFirstInstance(
+    proxy: NSDistantObject, 
+    source: Path, 
+    build_dir: Path, 
+    out_file_name: str
+):
+    out_file = build_dir / out_file_name
+    if out_file.exists():
+        eprint(f"reusing {out_file}")
+        return
+
+    source_path = source.as_posix()
+    build_dir_path = build_dir.as_posix()
+
+    doc = proxy.openDocumentWithContentsOfFile_display_(source_path, False)
+    print(f"Exporting {doc.displayName()} to {build_dir_path}")
+
+    font = doc.font()
+    instance = font.instances()[0]
+
+    arguments = {
+        'ExportFormat': "OTF",
+        'Destination': NSURL.fileURLWithPath_(build_dir_path)
+    }
+    if not FLAGS.production_names:
+        # Glyphs defaults to True.
+        arguments['useProductionNames'] = False
+    if FLAGS.keep_overlaps:
+        # Glyphs defaults to True for non-variable fonts.
+        arguments['removeOverlap'] = False
+
+    result = instance.generate_(arguments)
+
+    doc.close()
+    
+    if result[0] != "Success":
+        # Even though we do not have an actual command for Glyphs exports,
+        # we construct one which can be passed to `BuildFail`.
+        cmd = []
+        for k, v in arguments.items():
+            cmd.append(k)
+            cmd.append(v)
+
+        cmd.append(str(source))
+        cmd.append(str(out_file_name))
+
+        # If not successful, `result` is a list of `NSError` objects.
+        errors_string = "; ".join(error.localizedFailureReason() for error in result)
+        raise BuildFail(cmd, errors_string)
+    
+    # Rename file to our standard name.
+    temp_file = Path(result[1]).resolve()
+    temp_file_name = temp_file.name
+    file_to_rename = build_dir / temp_file_name
+    file_to_rename.rename(out_file)
 
 
 #===============================================================================
@@ -1264,6 +1367,7 @@ def main(argv):
 
     source = resolve_source(argv[1]).resolve()
 
+    # Configure dependencies.
     root = Path(".").resolve()
     if root.name != FONTC_NAME:
         sys.exit("Expected to be at the root of fontc")
@@ -1279,22 +1383,41 @@ def main(argv):
     if shutil.which(TTX_NAME) is None:
         sys.exit("No ttx")
 
+    compare = FLAGS.compare
+    
+    glyphs_3_proxy = None
+    glyphs_4_proxy = None
+    if compare == _COMPARE_GLYPHS_APP:
+        glyphs_3_proxy = application(GlyphsVersion.v3)
+        if glyphs_3_proxy == None:
+            sys.exit("No JSTalk connection to Glyphs 3")
+        glyphs_4_proxy = application(GlyphsVersion.v4)
+        if glyphs_4_proxy == None:
+            sys.exit("No JSTalk connection to Glyphs 4")
+
+    old_tool_name = GLYPHS_3_NAME if compare == _COMPARE_GLYPHS_APP else FONTMAKE_NAME
+    new_tool_name = GLYPHS_4_NAME if compare == _COMPARE_GLYPHS_APP else FONTC_NAME
+
+    # Configure output files.
     out_dir = root / "build"
     if FLAGS.outdir is not None:
         out_dir = Path(FLAGS.outdir).resolve()
         assert out_dir.exists(), f"output directory {out_dir} does not exist"
 
-    diffs = False
-
-    compare = FLAGS.compare
     build_dir = out_dir / compare
     build_dir.mkdir(parents=True, exist_ok=True)
     eprint(f"Compare {compare} in {build_dir}")
 
-    failures = dict()
-
     fontmake_ttf = build_dir / "fontmake.ttf"
     fontc_ttf = build_dir / "fontc.ttf"
+
+    glyphs_3_name = f"{GLYPHS_3_NAME}.otf"
+    glyphs_4_name = f"{GLYPHS_4_NAME}.otf"
+    glyphs_3_otf = build_dir / glyphs_3_name
+    glyphs_4_otf = build_dir / glyphs_4_name
+
+    old_font_file = glyphs_3_otf if compare == _COMPARE_GLYPHS_APP else fontmake_ttf
+    new_font_file = glyphs_4_otf if compare == _COMPARE_GLYPHS_APP else fontc_ttf
 
     # we delete all resources that we have to rebuild. The rest of the script
     # will assume it can reuse anything that still exists.
@@ -1306,11 +1429,16 @@ def main(argv):
         new_font_file
     )
 
+    diffs = False
+    failures = dict()
+
     try:
         if compare == _COMPARE_DEFAULT:
             build_fontc(source, fontc_bin_path, build_dir)
-        else:
+        elif compare == _COMPARE_GFTOOLS:
             run_gftools(source, FLAGS.config, build_dir, fontc_bin=fontc_bin_path)
+        else: # _COMPARE_GLYPHS_APP
+            exportFirstInstance(glyphs_4_proxy, source, build_dir, glyphs_4_name)
     except BuildFail as e:
         failures[new_tool_name] = {
             "command": " ".join(e.command),
@@ -1320,8 +1448,10 @@ def main(argv):
     try:
         if compare == _COMPARE_DEFAULT:
             build_fontmake(source, build_dir)
-        else:
+        elif compare == _COMPARE_GFTOOLS:
             run_gftools(source, FLAGS.config, build_dir)
+        else: # _COMPARE_GLYPHS_APP
+            exportFirstInstance(glyphs_3_proxy, source, build_dir, glyphs_3_name)
     except BuildFail as e:
         failures[old_tool_name] = {
             "command": " ".join(e.command),
