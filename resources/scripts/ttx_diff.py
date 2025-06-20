@@ -1245,7 +1245,7 @@ def jsonify_output(
 
 
 def print_json(output):
-    as_json = json.dumps(output, indent=2)
+    as_json = json.dumps(output, indent=2, sort_keys=True)
     print(as_json)
 
 
