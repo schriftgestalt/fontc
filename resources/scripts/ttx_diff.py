@@ -62,6 +62,10 @@ from urllib.parse import urlparse
 _COMPARE_DEFAULTS = "default"
 _COMPARE_GFTOOLS = "gftools"
 
+FONTC_NAME = "fontc"
+FONTMAKE_NAME = "fontmake"
+TTX_NAME = "ttx"
+
 # environment variable used by GFTOOLS
 GFTOOLS_FONTC_PATH = "GFTOOLS_FONTC_PATH"
 
@@ -111,7 +115,7 @@ flags.DEFINE_enum(
 flags.DEFINE_enum(
     "rebuild",
     "both",
-    ["both", "fontc", "fontmake", "none"],
+    ["both", FONTC_NAME, FONTMAKE_NAME, "none"],
     "Which compilers to rebuild with if the output appears to already exist. None is handy when playing with ttx_diff.py itself.",
 )
 flags.DEFINE_float(
@@ -176,7 +180,7 @@ def run_ttx(font_file: Path):
         return ttx_file
 
     cmd = [
-        "ttx",
+        TTX_NAME,
         "-o",
         ttx_file.name,
         font_file.name,
@@ -279,7 +283,7 @@ def build_fontmake(source: Path, build_dir: Path):
     if not variable:
         buildtype = "ttf"
     cmd = [
-        "fontmake",
+        FONTMAKE_NAME,
         "-o",
         buildtype,
         "--output-path",
@@ -361,7 +365,7 @@ def modified_gftools_config(
 def run_gftools(
     source: Path, config: Path, build_dir: Path, fontc_bin: Optional[Path] = None
 ):
-    tool = "fontmake" if fontc_bin is None else "fontc"
+    tool = FONTMAKE_NAME if fontc_bin is None else FONTC_NAME
     filename = tool + ".ttf"
     out_file = build_dir / filename
     if out_file.exists():
@@ -984,7 +988,7 @@ def reduce_diff_noise(fontc: etree.ElementTree, fontmake: etree.ElementTree):
 
 # given a font file, return a dictionary of tags -> size in bytes
 def get_table_sizes(fontfile: Path) -> dict[str, int]:
-    cmd = ["ttx", "-l", str(fontfile)]
+    cmd = [TTX_NAME, "-l", str(fontfile)]
     stdout = log_and_run(cmd, check=True).stdout
     result = dict()
 
@@ -1034,8 +1038,8 @@ def generate_output(
     fill_in_gvar_deltas(fontc, fontc_ttf, fontmake, fontmake_ttf)
     reduce_diff_noise(fontc, fontmake)
 
-    fontc = extract_comparables(fontc, build_dir, "fontc")
-    fontmake = extract_comparables(fontmake, build_dir, "fontmake")
+    fontc = extract_comparables(fontc, build_dir, FONTC_NAME)
+    fontmake = extract_comparables(fontmake, build_dir, FONTMAKE_NAME)
     size_diffs = check_sizes(fontmake_ttf, fontc_ttf)
     fontc[MARK_KERN_NAME] = fontc_gpos
     fontmake[MARK_KERN_NAME] = fontmake_gpos
@@ -1043,7 +1047,7 @@ def generate_output(
         fontc[LIG_CARET_NAME] = fontc_gdef
     if len(fontmake_gdef):
         fontmake[LIG_CARET_NAME] = fontmake_gdef
-    result = {"fontc": fontc, "fontmake": fontmake}
+    result = {FONTC_NAME: fontc, FONTMAKE_NAME: fontmake}
     if len(size_diffs) > 0:
         result["sizes"] = size_diffs
 
@@ -1051,8 +1055,8 @@ def generate_output(
 
 
 def print_output(build_dir: Path, output: dict[str, dict[str, Any]]):
-    fontc = output["fontc"]
-    fontmake = output["fontmake"]
+    fontc = output[FONTC_NAME]
+    fontmake = output[FONTMAKE_NAME]
     print("COMPARISON")
     t1 = set(fontc.keys())
     t2 = set(fontmake.keys())
@@ -1072,8 +1076,8 @@ def print_output(build_dir: Path, output: dict[str, dict[str, Any]]):
             print(f"  Identical '{tag}'")
         else:
             difference = diff_ratio(t1s, t2s)
-            p1 = build_dir / path_for_output_item(tag, "fontc")
-            p2 = build_dir / path_for_output_item(tag, "fontmake")
+            p1 = build_dir / path_for_output_item(tag, FONTC_NAME)
+            p2 = build_dir / path_for_output_item(tag, FONTMAKE_NAME)
             print(f"  DIFF '{tag}', {p1} {p2} ({difference:.3%})")
     if output.get("sizes"):
         print("SIZE DIFFERENCES")
@@ -1082,8 +1086,8 @@ def print_output(build_dir: Path, output: dict[str, dict[str, Any]]):
 
 
 def jsonify_output(output: dict[str, dict[str, Any]]):
-    fontc = output["fontc"]
-    fontmake = output["fontmake"]
+    fontc = output[FONTC_NAME]
+    fontmake = output[FONTMAKE_NAME]
     sizes = output.get("sizes", {})
     all_tags = set(fontc.keys()) | set(fontmake.keys())
     out = dict()
@@ -1092,10 +1096,10 @@ def jsonify_output(output: dict[str, dict[str, Any]]):
     for tag in all_tags:
         if tag not in fontc:
             different_lines += len(fontmake[tag])
-            out[tag] = "fontmake"
+            out[tag] = FONTMAKE_NAME
         elif tag not in fontmake:
             different_lines += len(fontc[tag])
-            out[tag] = "fontc"
+            out[tag] = FONTC_NAME
         else:
             s1 = fontc[tag]
             s2 = fontmake[tag]
@@ -1203,7 +1207,7 @@ def resolve_source(source: str) -> Path:
 
 
 def delete_things_we_must_rebuild(rebuild: str, fontmake_ttf: Path, fontc_ttf: Path):
-    for tool, ttf_path in [("fontmake", fontmake_ttf), ("fontc", fontc_ttf)]:
+    for tool, ttf_path in [(FONTMAKE_NAME, fontmake_ttf), (FONTC_NAME, fontc_ttf)]:
         must_rebuild = rebuild in [tool, "both"]
         if must_rebuild:
             for path in [
@@ -1239,18 +1243,18 @@ def main(argv):
     source = resolve_source(argv[1]).resolve()
 
     root = Path(".").resolve()
-    if root.name != "fontc":
+    if root.name != FONTC_NAME:
         sys.exit("Expected to be at the root of fontc")
 
-    fontc_bin_path = get_crate_path(FLAGS.fontc_path, root, "fontc")
+    fontc_bin_path = get_crate_path(FLAGS.fontc_path, root, FONTC_NAME)
     otl_bin_path = get_crate_path(FLAGS.normalizer_path, root, "otl-normalizer")
 
     assert fontc_bin_path.is_file(), f"fontc path '{fontc_bin_path}' does not exist"
     assert otl_bin_path.is_file(), f"normalizer path '{otl_bin_path}' does not exist"
 
-    if shutil.which("fontmake") is None:
+    if shutil.which(FONTMAKE_NAME) is None:
         sys.exit("No fontmake")
-    if shutil.which("ttx") is None:
+    if shutil.which(TTX_NAME) is None:
         sys.exit("No ttx")
 
     out_dir = root / "build"
@@ -1280,7 +1284,7 @@ def main(argv):
         else:
             run_gftools(source, FLAGS.config, build_dir, fontc_bin=fontc_bin_path)
     except BuildFail as e:
-        failures["fontc"] = {
+        failures[FONTC_NAME] = {
             "command": " ".join(e.command),
             "stderr": e.msg[-MAX_ERR_LEN:],
         }
@@ -1290,7 +1294,7 @@ def main(argv):
         else:
             run_gftools(source, FLAGS.config, build_dir)
     except BuildFail as e:
-        failures["fontmake"] = {
+        failures[FONTMAKE_NAME] = {
             "command": " ".join(e.command),
             "stderr": e.msg[-MAX_ERR_LEN:],
         }
@@ -1302,7 +1306,7 @@ def main(argv):
     assert fontc_ttf.is_file(), fontc_ttf
 
     output = generate_output(build_dir, otl_bin_path, fontmake_ttf, fontc_ttf)
-    if output["fontc"] == output["fontmake"]:
+    if output[FONTC_NAME] == output[FONTMAKE_NAME]:
         eprint("output is identical")
     else:
         diffs = True
