@@ -59,7 +59,7 @@ from typing import Any, Dict, Generator, List, Optional, Sequence, Tuple
 from urllib.parse import urlparse
 
 
-_COMPARE_DEFAULTS = "default"
+_COMPARE_DEFAULT = "default"
 _COMPARE_GFTOOLS = "gftools"
 
 FONTC_NAME = "fontc"
@@ -109,8 +109,8 @@ flags.DEFINE_string(
 flags.DEFINE_enum(
     "compare",
     "default",
-    [_COMPARE_DEFAULTS, _COMPARE_GFTOOLS],
-    "Compare results using either a default build or a build managed by gftools. Note that as of 5/21/2023 defaults still sets flags for fontmake to match fontc behavior.",
+    [_COMPARE_DEFAULT, _COMPARE_GFTOOLS],
+    "Compare results using either a default build or a build managed by gftools. Note that as of 5/21/2023 default still sets flags for fontmake to match fontc behavior.",
 )
 flags.DEFINE_enum(
     "rebuild",
@@ -975,7 +975,9 @@ def reduce_diff_noise(fontc: etree.ElementTree, fontmake: etree.ElementTree):
         # for earlier steps)
         normalize_name_ids(ttx)
 
-    allow_some_off_by_ones(fontc, fontmake, "glyf/TTGlyph", "name", "/contour/pt")
+    allow_some_off_by_ones(
+        fontc, fontmake, "glyf/TTGlyph", "name", "/contour/pt"
+    )
     allow_some_off_by_ones(
         fontc, fontmake, "gvar/glyphVariations", "glyph", "/tuple/delta"
     )
@@ -1279,7 +1281,7 @@ def main(argv):
     delete_things_we_must_rebuild(FLAGS.rebuild, fontmake_ttf, fontc_ttf)
 
     try:
-        if compare == _COMPARE_DEFAULTS:
+        if compare == _COMPARE_DEFAULT:
             build_fontc(source, fontc_bin_path, build_dir)
         else:
             run_gftools(source, FLAGS.config, build_dir, fontc_bin=fontc_bin_path)
@@ -1289,7 +1291,7 @@ def main(argv):
             "stderr": e.msg[-MAX_ERR_LEN:],
         }
     try:
-        if compare == _COMPARE_DEFAULTS:
+        if compare == _COMPARE_DEFAULT:
             build_fontmake(source, build_dir)
         else:
             run_gftools(source, FLAGS.config, build_dir)
