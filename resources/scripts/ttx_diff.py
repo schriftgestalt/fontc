@@ -449,7 +449,9 @@ MAX_CONNECTION_TRIES = 10
 # This function has been adapted from `Glyphs remote scripts/Glyphs.py`
 # in the `https://github.com/schriftgestalt/GlyphsSDK` repository.
 def application(glyphsVersion):
-    os.system(f"open -a 'Glyphs {glyphsVersion}'")
+    # `-g` opens the application in the background.
+    # `-j` opens the application hidden (its windows are not visible).
+    os.system(f"open -a 'Glyphs {glyphsVersion}' -g -j")
 
     port = f"com.GeorgSeifert.Glyphs{glyphsVersion}"
     conn = None
