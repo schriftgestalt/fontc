@@ -26,6 +26,7 @@ pub(crate) struct Target {
 pub(crate) enum BuildType {
     Default,
     GfTools,
+    GlyphsApp,
 }
 
 fn get_source_dir(source_path: &Path) -> Result<PathBuf, InvalidTargetPath> {
@@ -188,6 +189,14 @@ impl Target {
                 write!(&mut cmd, " --config {config}").unwrap();
             }
         }
+        else if self.build == BuildType::GlyphsApp {
+            cmd.push_str(" --compare glyphs_app");
+            // we hard code this; repro will only work if they're using default
+            // cache location
+            if let Some(config) = self.config_path_stripping_disambiguating_sha_if_necessary() {
+                write!(&mut cmd, " --config {config}").unwrap();
+            }
+        }
         cmd
     }
 }
@@ -197,6 +206,7 @@ impl BuildType {
         match self {
             BuildType::Default => "default",
             BuildType::GfTools => "gftools",
+            BuildType::GlyphsApp => "glyphs_app",
         }
     }
 }
@@ -274,6 +284,7 @@ impl FromStr for Target {
         let type_ = match type_.trim_end_matches(')') {
             "default" => BuildType::Default,
             "gftools" => BuildType::GfTools,
+            "glyphs_app" => BuildType::GlyphsApp,
             other => return Err(format!("unknown build type '{other}'")),
         };
 
@@ -392,12 +403,21 @@ mod tests {
     }
 
     #[test]
-    fn serde_no_config() {
+    fn serde_no_config_gftools() {
         let json = "\"org/repo/sources/myfile.is_here (gftools)\"";
         let from_json: Target = serde_json::from_str(json).unwrap();
         assert_eq!(from_json.source.as_os_str(), "myfile.is_here");
         assert!(from_json.config.is_none());
         assert!(from_json.build == BuildType::GfTools);
+    }
+
+    #[test]
+    fn serde_no_config_glyphs_app() {
+        let json = "\"org/repo/sources/myfile.is_here (glyphs_app)\"";
+        let from_json: Target = serde_json::from_str(json).unwrap();
+        assert_eq!(from_json.source.as_os_str(), "myfile.is_here");
+        assert!(from_json.config.is_none());
+        assert!(from_json.build == BuildType::GlyphsApp);
     }
 
     #[test]
