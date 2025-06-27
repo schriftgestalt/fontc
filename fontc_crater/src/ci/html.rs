@@ -19,6 +19,8 @@ use maud::{html, Markup, PreEscaped};
 use super::{DiffResults, RunSummary};
 
 static HTML_FILE: &str = "index.html";
+const NEW_TOOL_NAME: &str = "new_tool";
+const OLD_TOOL_NAME: &str = "old_tool";
 
 pub(super) fn generate(target_dir: &Path) -> Result<(), Error> {
     let summary_path = target_dir.join(super::SUMMARY_FILE);
@@ -173,13 +175,13 @@ fn make_table_body(runs: &[RunSummary]) -> Markup {
             More::IsBetter,
         );
         let fontc_err_diff = make_delta_decoration(
-            run.stats.fontc_failed as i32,
-            prev.map(|p| p.stats.fontc_failed as i32),
+            run.stats.new_tool_failed as i32,
+            prev.map(|p| p.stats.new_tool_failed as i32),
             More::IsWorse,
         );
         let fontmake_err_diff = make_delta_decoration(
-            run.stats.fontmake_failed as i32,
-            prev.map(|p| p.stats.fontmake_failed as i32),
+            run.stats.old_tool_failed as i32,
+            prev.map(|p| p.stats.old_tool_failed as i32),
             More::IsWorse,
         );
         let both_err_diff = make_delta_decoration(
@@ -208,15 +210,15 @@ fn make_table_body(runs: &[RunSummary]) -> Markup {
         let short_rev = run.fontc_rev.get(..16).unwrap_or(run.fontc_rev.as_str());
         let err_cells = if is_most_recent {
             html! {
-                td.fontc_err { a href = "#fontc-failures" {  (run.stats.fontc_failed) " " (fontc_err_diff)  } }
-                td.fontmake_err { a href = "#fontmake-failures" {  (run.stats.fontmake_failed) " " (fontmake_err_diff)  } }
+                td.fontc_err { a href = "#fontc-failures" {  (run.stats.new_tool_failed) " " (fontc_err_diff)  } }
+                td.fontmake_err { a href = "#fontmake-failures" {  (run.stats.old_tool_failed) " " (fontmake_err_diff)  } }
                 td.both_err { a href = "#both-failures" {  (run.stats.both_failed) " " (both_err_diff) } }
                 td.other_err { a href = "#other-failures" {  (run.stats.other_failure) " " (other_err_diff)  } }
             }
         } else {
             html! {
-            td.fontc_err {  (run.stats.fontc_failed) " " (fontc_err_diff)  }
-            td.fontmake_err {  (run.stats.fontmake_failed) " " (fontmake_err_diff)  }
+            td.fontc_err {  (run.stats.new_tool_failed) " " (fontc_err_diff)  }
+            td.fontmake_err {  (run.stats.old_tool_failed) " " (fontmake_err_diff)  }
             td.both_err {  (run.stats.both_failed) " " (both_err_diff) }
             td.other_err {  (run.stats.other_failure) " " (other_err_diff)  }
             }
@@ -523,10 +525,10 @@ fn make_error_report(
     prev: &DiffResults,
     sources: &BTreeMap<PathBuf, String>,
 ) -> Markup {
-    let current_fontc = get_compiler_failures(current, "fontc");
-    let prev_fontc = get_compiler_failures(prev, "fontc");
-    let current_fontmake = get_compiler_failures(current, "fontmake");
-    let prev_fontmake = get_compiler_failures(prev, "fontmake");
+    let current_fontc = get_compiler_failures(current, NEW_TOOL_NAME);
+    let prev_fontc = get_compiler_failures(prev, NEW_TOOL_NAME);
+    let current_fontmake = get_compiler_failures(current, OLD_TOOL_NAME);
+    let prev_fontmake = get_compiler_failures(prev, OLD_TOOL_NAME);
 
     let current_both = current_fontc
         .keys()
@@ -854,8 +856,8 @@ fn get_compiler_failures<'a>(
             return None;
         };
         match compiler {
-            "fontc" => compfail.fontc.as_ref(),
-            "fontmake" => compfail.fontmake.as_ref(),
+            NEW_TOOL_NAME => compfail.new_tool.as_ref(),
+            OLD_TOOL_NAME => compfail.old_tool.as_ref(),
             _ => panic!("this is quite unexpected"),
         }
     };
