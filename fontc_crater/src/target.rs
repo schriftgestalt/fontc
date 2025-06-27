@@ -258,7 +258,7 @@ impl FromStr for Target {
                 .map_err(|e| format!("failed to parse target '{s}': {e}"));
         }
         // else expect the format,
-        // PATH [(config)] (default|gftools)
+        // PATH [(config)] (default|gftools|glyphs_app)
         let (head, type_) = s
             .rsplit_once('(')
             .ok_or_else(|| "missing opening paren".to_string())?;
