@@ -67,6 +67,8 @@ _COMPARE_GLYPHS_APP = "glyphs_app"
 
 FONTC_NAME = "fontc"
 FONTMAKE_NAME = "fontmake"
+GLYPHS_3_NAME = "glyphs_3"
+GLYPHS_4_NAME = "glyphs_4"
 TTX_NAME = "ttx"
 
 # environment variable used by GFTOOLS
@@ -117,8 +119,8 @@ flags.DEFINE_enum(
 )
 flags.DEFINE_enum(
     "rebuild",
-    "both",
-    ["both", FONTC_NAME, FONTMAKE_NAME, "none"],
+    "all",
+    ["all", FONTC_NAME, FONTMAKE_NAME, GLYPHS_3_NAME, GLYPHS_4_NAME, "none"],
     "Which compilers to rebuild with if the output appears to already exist. None is handy when playing with ttx_diff.py itself.",
 )
 flags.DEFINE_float(
@@ -438,9 +440,6 @@ def copy(old, new):
 class GlyphsVersion(IntEnum):
     v3 = 3
     v4 = 4
-
-GLYPHS_4_NAME = "glyphs_4"
-GLYPHS_3_NAME = "glyphs_3"
 
 # Maximum number of tries to establish a JSTalk connection to Glyphs.app.
 MAX_CONNECTION_TRIES = 10
@@ -1335,7 +1334,7 @@ def delete_things_we_must_rebuild(
     new_font_file: Path
 ):
     for tool, font_file_path in [(old_tool_name, old_font_file), (new_tool_name, new_font_file)]:
-        must_rebuild = rebuild in [tool, "both"]
+        must_rebuild = rebuild in [tool, "all"]
         if must_rebuild:
             for path in [
                 font_file_path,
