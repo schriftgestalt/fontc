@@ -509,6 +509,7 @@ fn make_target_description(target: &Target) -> Markup {
             }
             _ => "gftools".to_string(),
         },
+        BuildType::GlyphsApp => "glyphs_app".to_string(),
     };
     html! {
         (source)
