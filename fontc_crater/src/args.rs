@@ -25,6 +25,7 @@ pub(super) enum Commands {
 pub(super) struct CiArgs {
     /// Path to a json list of repos + revs to run.
     pub(super) to_run: PathBuf,
+
     /// Directory to store font sources and the google/fonts repo.
     ///
     /// Reusing this directory saves us having to clone all the repos on each run.
@@ -41,9 +42,18 @@ pub(super) struct CiArgs {
     /// This should be consistent between runs.
     #[arg(short = 'o', long = "out")]
     pub(super) out_dir: PathBuf,
-    /// gftools mode (disable to reduce target count when running locally)
+
+    /// gftools mode (disable to reduce target count when running locally).
     #[arg(long, default_value = "true", action = clap::ArgAction::Set)]
     pub(super) gftools: bool,
+
+    /// Glyphs app mode (enable to compare the output of two Glyphs versions
+    /// when running locally).
+    ///
+    /// Currently, this implicitly disables both `default` and `gftools` modes.
+    #[arg(long, default_value = "false", action = clap::ArgAction::Set)]
+    pub(super) glyphs_app: bool,
+
     /// only generate html (for the provided out_dir)
     #[arg(long)]
     pub(super) html_only: bool,
