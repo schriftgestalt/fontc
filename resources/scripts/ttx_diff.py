@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Helper for comparing fontc (Rust) vs fontmake (Python) binaries.
+"""Helper for comparing fontc (Rust) vs fontmake (Python) or Glyphs 3 vs 
+Glyphs 4 binaries.
 
 Turns each into ttx, eliminates expected sources of difference and prints
 a brief summary of the result.
@@ -12,7 +13,7 @@ Usage:
 
     # rebuild the fontc copy, reuse the prior fontmake copy (if present), and compare
     # useful if you are making changes to fontc meant to narrow the diff
-    python resources/scripts/ttx_diff.py --rebuild fontc ../OswaldFont/sources/Oswald.glyphs
+    python resources/scripts/ttx_diff.py --rebuild new_tool ../OswaldFont/sources/Oswald.glyphs
 
 JSON:
     If the `--json` flag is passed, this tool will output JSON.
@@ -67,8 +68,8 @@ _COMPARE_GLYPHS_APP = "glyphs_app"
 
 FONTC_NAME = "fontc"
 FONTMAKE_NAME = "fontmake"
-GLYPHS_3_NAME = "glyphs_3"
-GLYPHS_4_NAME = "glyphs_4"
+NEW_TOOL_NAME = "new_tool"
+OLD_TOOL_NAME = "old_tool"
 TTX_NAME = "ttx"
 
 # environment variable used by GFTOOLS
@@ -119,8 +120,8 @@ flags.DEFINE_enum(
 )
 flags.DEFINE_enum(
     "rebuild",
-    "all",
-    ["all", FONTC_NAME, FONTMAKE_NAME, GLYPHS_3_NAME, GLYPHS_4_NAME, "none"],
+    "both",
+    ["both", NEW_TOOL_NAME, OLD_TOOL_NAME, "none"],
     "Which compilers to rebuild with if the output appears to already exist. None is handy when playing with ttx_diff.py itself.",
 )
 flags.DEFINE_float(
@@ -258,7 +259,7 @@ def build(cmd: Sequence, build_dir: Optional[Path], **kwargs):
 
 
 def build_fontc(source: Path, fontc_bin: Path, build_dir: Path):
-    out_file = build_dir / "fontc.ttf"
+    out_file = build_dir / f"{NEW_TOOL_NAME}.ttf"
     if out_file.exists():
         eprint(f"reusing {out_file}")
         return
@@ -279,7 +280,7 @@ def build_fontc(source: Path, fontc_bin: Path, build_dir: Path):
 
 
 def build_fontmake(source: Path, build_dir: Path):
-    out_file = build_dir / "fontmake.ttf"
+    out_file = build_dir / f"{OLD_TOOL_NAME}.ttf"
     if out_file.exists():
         eprint(f"reusing {out_file}")
         return
@@ -370,7 +371,7 @@ def modified_gftools_config(
 def run_gftools(
     source: Path, config: Path, build_dir: Path, fontc_bin: Optional[Path] = None
 ):
-    tool = FONTMAKE_NAME if fontc_bin is None else FONTC_NAME
+    tool = OLD_TOOL_NAME if fontc_bin is None else NEW_TOOL_NAME
     filename = tool + ".ttf"
     out_file = build_dir / filename
     if out_file.exists():
@@ -1341,7 +1342,7 @@ def delete_things_we_must_rebuild(
     new_font_file: Path
 ):
     for tool, font_file_path in [(old_tool_name, old_font_file), (new_tool_name, new_font_file)]:
-        must_rebuild = rebuild in [tool, "all"]
+        must_rebuild = rebuild in [tool, "both"]
         if must_rebuild:
             for path in [
                 font_file_path,
@@ -1403,8 +1404,9 @@ def main(argv):
         if glyphs_4_proxy == None:
             sys.exit("No JSTalk connection to Glyphs 4")
 
-    old_tool_name = GLYPHS_3_NAME if compare == _COMPARE_GLYPHS_APP else FONTMAKE_NAME
-    new_tool_name = GLYPHS_4_NAME if compare == _COMPARE_GLYPHS_APP else FONTC_NAME
+    # Keep names generic if possible.
+    old_tool_name = OLD_TOOL_NAME
+    new_tool_name = NEW_TOOL_NAME
 
     # Configure output files.
     out_dir = root / "build"
@@ -1416,16 +1418,11 @@ def main(argv):
     build_dir.mkdir(parents=True, exist_ok=True)
     eprint(f"Compare {compare} in {build_dir}")
 
-    fontmake_ttf = build_dir / "fontmake.ttf"
-    fontc_ttf = build_dir / "fontc.ttf"
-
-    glyphs_3_name = f"{GLYPHS_3_NAME}.otf"
-    glyphs_4_name = f"{GLYPHS_4_NAME}.otf"
-    glyphs_3_otf = build_dir / glyphs_3_name
-    glyphs_4_otf = build_dir / glyphs_4_name
-
-    old_font_file = glyphs_3_otf if compare == _COMPARE_GLYPHS_APP else fontmake_ttf
-    new_font_file = glyphs_4_otf if compare == _COMPARE_GLYPHS_APP else fontc_ttf
+    font_file_extension = "otf" if compare == _COMPARE_GLYPHS_APP else "ttf"
+    old_font_file_name = f"{OLD_TOOL_NAME}.{font_file_extension}"
+    new_font_file_name = f"{NEW_TOOL_NAME}.{font_file_extension}"
+    old_font_file = build_dir / old_font_file_name
+    new_font_file = build_dir / new_font_file_name
 
     # we delete all resources that we have to rebuild. The rest of the script
     # will assume it can reuse anything that still exists.
@@ -1446,7 +1443,7 @@ def main(argv):
         elif compare == _COMPARE_GFTOOLS:
             run_gftools(source, FLAGS.config, build_dir, fontc_bin=fontc_bin_path)
         else: # _COMPARE_GLYPHS_APP
-            exportFirstInstance(glyphs_4_proxy, source, build_dir, glyphs_4_name)
+            exportFirstInstance(glyphs_4_proxy, source, build_dir, new_font_file_name)
     except BuildFail as e:
         failures[new_tool_name] = {
             "command": " ".join(e.command),
@@ -1459,7 +1456,7 @@ def main(argv):
         elif compare == _COMPARE_GFTOOLS:
             run_gftools(source, FLAGS.config, build_dir)
         else: # _COMPARE_GLYPHS_APP
-            exportFirstInstance(glyphs_3_proxy, source, build_dir, glyphs_3_name)
+            exportFirstInstance(glyphs_3_proxy, source, build_dir, old_font_file_name)
     except BuildFail as e:
         failures[old_tool_name] = {
             "command": " ".join(e.command),

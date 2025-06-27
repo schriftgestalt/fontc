@@ -31,9 +31,9 @@ pub(super) fn run_ttx_diff(ctx: &TtxContext, target: &Target) -> RunResult<DiffO
         .arg("--fontc_path").arg(&ctx.fontc_path)
         .arg("--normalizer_path").arg(&ctx.normalizer_path);
     if target.build == BuildType::GlyphsApp {
-        cmd.args(["--rebuild", "all"]);
+        cmd.args(["--rebuild", "both"]);
     } else {
-        cmd.args(["--rebuild", "fontc"]);
+        cmd.args(["--rebuild", "new_tool"]);
     }
     if target.build == BuildType::GfTools {
         if let Some(config) = target.config_path(&ctx.source_cache) {

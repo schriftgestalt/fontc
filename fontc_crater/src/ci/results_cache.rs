@@ -1,4 +1,4 @@
-//! Caching fontmake's output between runs
+//! Caching the old tool’s (e. g. `fontmake`) output between runs
 
 use std::path::{Path, PathBuf};
 
@@ -7,9 +7,9 @@ use crate::Target;
 static CACHE_DIR_NAME: &str = "crater_cached_results";
 
 // the files that we cache for each target
-static FONT_FILE: &str = "fontmake.ttf";
-static TTX_FILE: &str = "fontmake.ttx";
-static MARKKERN_FILE: &str = "fontmake.markkern.txt";
+static FONT_FILE: &str = "old_tool.ttf";
+static TTX_FILE: &str = "old_tool.ttx";
+static MARKKERN_FILE: &str = "old_tool.markkern.txt";
 
 /// Manages a cache of files on disk
 pub(crate) struct ResultsCache {
