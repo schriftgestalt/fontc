@@ -24,13 +24,17 @@ pub(super) fn run_ttx_diff(ctx: &TtxContext, target: &Target) -> RunResult<DiffO
     ctx.results_cache
         .copy_cached_files_to_build_dir(target, &build_dir);
     let mut cmd = Command::new("python");
-    cmd.args([SCRIPT_PATH, "--json", "--compare", compare, "--outdir"])
-        .arg(outdir)
-        .arg("--fontc_path")
-        .arg(&ctx.fontc_path)
-        .arg("--normalizer_path")
-        .arg(&ctx.normalizer_path)
-        .args(["--rebuild", "fontc"]);
+    cmd.arg(SCRIPT_PATH)
+        .arg("--json")
+        .arg("--compare").arg(compare)
+        .arg("--outdir").arg(outdir)
+        .arg("--fontc_path").arg(&ctx.fontc_path)
+        .arg("--normalizer_path").arg(&ctx.normalizer_path);
+    if target.build == BuildType::GlyphsApp {
+        cmd.args(["--rebuild", "all"]);
+    } else {
+        cmd.args(["--rebuild", "fontc"]);
+    }
     if target.build == BuildType::GfTools {
         if let Some(config) = target.config_path(&ctx.source_cache) {
             cmd.arg("--config").arg(config);
