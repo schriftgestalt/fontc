@@ -126,13 +126,18 @@ fn run_crater_and_save_results(args: &CiArgs) -> Result<(), Error> {
     log::info!("compiled fontc to {}", fontc_path.display());
     log::info!("compiled otl-normalizeer to {}", normalizer_path.display());
 
+    let in_glyphs_app_mode = args.glyphs_app;
     let ResolvedTargets {
         mut targets,
         source_repos,
         failures,
-    } = make_targets(&cache_dir, &inputs.sources);
+    } = make_targets(&cache_dir, &inputs.sources, in_glyphs_app_mode);
 
-    if !args.gftools {
+    // If in `glyphs_app` mode, keep only targets with `GlyphsApp` build type.
+    // If not in `gftools` mode, keep only targets with `Default` buuld type.
+    if args.glyphs_app {
+        targets.retain(|t| t.build == BuildType::GlyphsApp);
+    } else if !args.gftools {
         targets.retain(|t| t.build == BuildType::Default);
     }
 
@@ -230,7 +235,7 @@ impl ResolvedTargets {
     }
 }
 
-fn make_targets(cache_dir: &Path, repos: &[FontSource]) -> ResolvedTargets {
+fn make_targets(cache_dir: &Path, repos: &[FontSource], in_glyphs_app_mode: bool) -> ResolvedTargets {
     // first instantiate every repo in parallel:
     preflight_all_repos(cache_dir, repos);
     let mut result = ResolvedTargets::default();
@@ -276,6 +281,7 @@ fn make_targets(cache_dir: &Path, repos: &[FontSource]) -> ResolvedTargets {
                 src_path,
                 relative_config_path,
                 &config,
+                in_glyphs_app_mode
             ))
         }
     }
@@ -303,32 +309,50 @@ fn targets_for_source(
     src_path: &Path,
     config_path: &Path,
     config: &Config,
-) -> impl Iterator<Item = Target> {
+    in_glyphs_app_mode: bool
+) -> Vec<Target> {
     let sha = source.git_rev();
-    let default = Some(Target::new(
-        src_path.to_owned(),
-        config_path.to_owned(),
-        sha.to_owned(),
-        BuildType::Default,
-    ));
 
-    let gftools = should_build_in_gftools_mode(src_path, config).then(|| {
-        Target::new(
+    // Currently, `GlyphsApp` builds are mutually exclusive with the others.
+    let mut targets = Vec::with_capacity(if in_glyphs_app_mode { 1 } else { 2 });
+
+    if in_glyphs_app_mode {
+        if should_build_in_glyphs_app_mode(src_path) {
+            match Target::new(
+                src_path.to_owned(),
+                config_path.to_owned(),
+                sha.to_owned(),
+                BuildType::GlyphsApp,
+            ) {
+                Ok(t)  => targets.push(t),
+                Err(e) => log::warn!("failed to generate `GlyphsApp` target: {e}"),
+            }
+        }
+    } else {
+        match Target::new(
             src_path.to_owned(),
             config_path.to_owned(),
             sha.to_owned(),
-            BuildType::GfTools,
-        )
-    });
-    [default, gftools]
-        .into_iter()
-        .filter_map(|t| match t.transpose() {
-            Ok(t) => t,
-            Err(e) => {
-                log::warn!("failed to generate target: {e}");
-                None
+            BuildType::Default,
+        ) {
+            Ok(t)  => targets.push(t),
+            Err(e) => log::warn!("failed to generate `Default` target: {e}"),
+        }
+    
+        if should_build_in_gftools_mode(src_path, config) {
+            match Target::new(
+                src_path.to_owned(),
+                config_path.to_owned(),
+                sha.to_owned(),
+                BuildType::GfTools,
+            ) {
+                Ok(t)  => targets.push(t),
+                Err(e) => log::warn!("failed to generate `GfTools` target: {e}"),
             }
-        })
+        }
+    }
+
+    targets
 }
 
 fn should_build_in_gftools_mode(src_path: &Path, config: &Config) -> bool {
@@ -355,6 +379,16 @@ fn should_build_in_gftools_mode(src_path: &Path, config: &Config) -> bool {
         .as_ref()
         .filter(|provider| *provider != "googlefonts")
         .is_none()
+}
+
+fn should_build_in_glyphs_app_mode(src_path: &Path) -> bool {
+    let extension = src_path
+        .extension()
+        .map(|s| s.to_string_lossy())
+        .unwrap_or_default();
+
+    // Accept only `.glyphs` and `.glyphspackage` files.
+    extension.to_lowercase().starts_with("glyphs")
 }
 
 fn format_elapsed_time<Tmz: TimeZone>(start: &DateTime<Tmz>, end: &DateTime<Tmz>) -> String {
