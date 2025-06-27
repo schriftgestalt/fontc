@@ -445,6 +445,13 @@ class GlyphsVersion(IntEnum):
 MAX_CONNECTION_TRIES = 10
 
 
+# `fontc_crater/ttx_diff_runner.rs` expects nothing but JSON on `stdout`,
+# so we log status messages only if we are not in JSON output mode.
+def print_if_not_json(message: str):
+    if not FLAGS.json:
+        print(message)
+
+
 # This function has been adapted from `Glyphs remote scripts/Glyphs.py`
 # in the `https://github.com/schriftgestalt/GlyphsSDK` repository.
 def application(glyphsVersion):
@@ -456,17 +463,17 @@ def application(glyphsVersion):
     conn = None
     tries = 1
 
-    print(f"Looking for a JSTalk connection to Glyphs {glyphsVersion}")
+    print_if_not_json(f"Looking for a JSTalk connection to Glyphs {glyphsVersion}")
     while ((conn is None) and (tries < MAX_CONNECTION_TRIES)):
         conn = NSConnection.connectionWithRegisteredName_host_(port, None)
         tries = tries + 1
 
         if (not conn):
-            print(f"Could not find connection, trying again ({tries} of {MAX_CONNECTION_TRIES})")
+            print_if_not_json(f"Could not find connection, trying again ({tries} of {MAX_CONNECTION_TRIES})")
             time.sleep(1)
 
     if (not conn):
-        print(f"Failed to find a JSTalk connection to Glyphs {glyphsVersion}")
+        print_if_not_json(f"Failed to find a JSTalk connection to Glyphs {glyphsVersion}")
         return None
 
     return conn.rootProxy()
@@ -489,7 +496,7 @@ def exportFirstInstance(
     build_dir_path = build_dir.as_posix()
 
     doc = proxy.openDocumentWithContentsOfFile_display_(source_path, False)
-    print(f"Exporting {doc.displayName()} to {build_dir_path}")
+    print_if_not_json(f"Exporting {doc.displayName()} to {build_dir_path}")
 
     font = doc.font()
     instance = font.instances()[0]
