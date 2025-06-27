@@ -528,7 +528,7 @@ def exportFirstInstance(
         cmd.append(str(out_file_name))
 
         # If not successful, `result` is a list of `NSError` objects.
-        errors_string = "; ".join(error.localizedFailureReason() for error in result)
+        errors_string = "; ".join(error.localizedDescription() for error in result)
         raise BuildFail(cmd, errors_string)
     
     # Rename file to our standard name.
