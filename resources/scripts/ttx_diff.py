@@ -64,7 +64,7 @@ from urllib.parse import urlparse
 
 _COMPARE_DEFAULT = "default"
 _COMPARE_GFTOOLS = "gftools"
-_COMPARE_GLYPHS_APP = "glyphs_app"
+_COMPARE_GLYPHS_APP = "glyphsapp"
 
 FONTC_NAME = "fontc"
 FONTMAKE_NAME = "fontmake"
@@ -116,7 +116,7 @@ flags.DEFINE_enum(
     "compare",
     "default",
     [_COMPARE_DEFAULT, _COMPARE_GFTOOLS, _COMPARE_GLYPHS_APP],
-    "Compare results using either a default build, a build managed by gftools, or versions 3 and 4 of Glyphs. Note that as of 5/21/2023 default still sets flags for fontmake to match fontc behavior.",
+    "Compare results using either a default build, a build managed by gftools, or two versions of the Glyphs app. Note that as of 5/21/2023 default still sets flags for fontmake to match fontc behavior.",
 )
 flags.DEFINE_enum(
     "rebuild",

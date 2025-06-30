@@ -22,10 +22,18 @@ pub(crate) struct Target {
     pub(crate) build: BuildType,
 }
 
+/// This is different from `args::RunMode` in that these values specify tool
+/// combinations _exclusively_, since the `ttx_diff.py` script can only generate
+/// diffs for one set of tools.
 #[derive(Clone, Debug, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) enum BuildType {
+    /// Build with the `fontc` and `fontmake` executables directly.
     Default,
+
+    /// Build via `gftools`, which uses `fontc` and `fontmake` internally.
     GfTools,
+
+    /// Build via two Glyphs app versions.
     GlyphsApp,
 }
 
@@ -190,7 +198,7 @@ impl Target {
             }
         }
         else if self.build == BuildType::GlyphsApp {
-            cmd.push_str(" --compare glyphs_app");
+            cmd.push_str(" --compare glyphsapp");
             // we hard code this; repro will only work if they're using default
             // cache location
             if let Some(config) = self.config_path_stripping_disambiguating_sha_if_necessary() {
@@ -206,7 +214,7 @@ impl BuildType {
         match self {
             BuildType::Default => "default",
             BuildType::GfTools => "gftools",
-            BuildType::GlyphsApp => "glyphs_app",
+            BuildType::GlyphsApp => "glyphsapp",
         }
     }
 }
@@ -258,7 +266,7 @@ impl FromStr for Target {
                 .map_err(|e| format!("failed to parse target '{s}': {e}"));
         }
         // else expect the format,
-        // PATH [(config)] (default|gftools|glyphs_app)
+        // PATH [(config)] (default|gftools|glyphsapp)
         let (head, type_) = s
             .rsplit_once('(')
             .ok_or_else(|| "missing opening paren".to_string())?;
@@ -284,7 +292,7 @@ impl FromStr for Target {
         let type_ = match type_.trim_end_matches(')') {
             "default" => BuildType::Default,
             "gftools" => BuildType::GfTools,
-            "glyphs_app" => BuildType::GlyphsApp,
+            "glyphsapp" => BuildType::GlyphsApp,
             other => return Err(format!("unknown build type '{other}'")),
         };
 
@@ -413,7 +421,7 @@ mod tests {
 
     #[test]
     fn serde_no_config_glyphs_app() {
-        let json = "\"org/repo/sources/myfile.is_here (glyphs_app)\"";
+        let json = "\"org/repo/sources/myfile.is_here (glyphsapp)\"";
         let from_json: Target = serde_json::from_str(json).unwrap();
         assert_eq!(from_json.source.as_os_str(), "myfile.is_here");
         assert!(from_json.config.is_none());
