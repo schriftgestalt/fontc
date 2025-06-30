@@ -18,7 +18,7 @@ use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use serde::de::DeserializeOwned;
 
 use crate::{
-    args::CiArgs,
+    args::{CiArgs, RunMode},
     error::Error,
     ttx_diff_runner::{DiffError, DiffOutput},
     BuildType, Results, Target,
@@ -126,19 +126,19 @@ fn run_crater_and_save_results(args: &CiArgs) -> Result<(), Error> {
     log::info!("compiled fontc to {}", fontc_path.display());
     log::info!("compiled otl-normalizeer to {}", normalizer_path.display());
 
-    let in_glyphs_app_mode = args.glyphs_app;
+    let mode = args.mode;
     let ResolvedTargets {
         mut targets,
         source_repos,
         failures,
-    } = make_targets(&cache_dir, &inputs.sources, in_glyphs_app_mode);
+    } = make_targets(&cache_dir, &inputs.sources, mode);
 
-    // If in `glyphs_app` mode, keep only targets with `GlyphsApp` build type.
-    // If not in `gftools` mode, keep only targets with `Default` buuld type.
-    if args.glyphs_app {
-        targets.retain(|t| t.build == BuildType::GlyphsApp);
-    } else if !args.gftools {
-        targets.retain(|t| t.build == BuildType::Default);
+    // If not in `GfTools` mode, keep only targets with `Default` build type.
+    // If in `GlyphsApp` mode, keep only targets with `GlyphsApp` build type.
+    match mode {
+        RunMode::GfTools => (),
+        RunMode::Default => targets.retain(|t| t.build == BuildType::Default),
+        RunMode::GlyphsApp => targets.retain(|t| t.build == BuildType::GlyphsApp),
     }
 
     let n_targets = targets.len();
@@ -235,7 +235,7 @@ impl ResolvedTargets {
     }
 }
 
-fn make_targets(cache_dir: &Path, repos: &[FontSource], in_glyphs_app_mode: bool) -> ResolvedTargets {
+fn make_targets(cache_dir: &Path, repos: &[FontSource], mode: RunMode) -> ResolvedTargets {
     // first instantiate every repo in parallel:
     preflight_all_repos(cache_dir, repos);
     let mut result = ResolvedTargets::default();
@@ -281,7 +281,7 @@ fn make_targets(cache_dir: &Path, repos: &[FontSource], in_glyphs_app_mode: bool
                 src_path,
                 relative_config_path,
                 &config,
-                in_glyphs_app_mode
+                mode
             ))
         }
     }
@@ -309,11 +309,12 @@ fn targets_for_source(
     src_path: &Path,
     config_path: &Path,
     config: &Config,
-    in_glyphs_app_mode: bool
+    mode: RunMode
 ) -> Vec<Target> {
     let sha = source.git_rev();
 
-    // Currently, `GlyphsApp` builds are mutually exclusive with the others.
+    // `GlyphsApp` builds are mutually exclusive with the others.
+    let in_glyphs_app_mode = mode == RunMode::GlyphsApp;
     let mut targets = Vec::with_capacity(if in_glyphs_app_mode { 1 } else { 2 });
 
     if in_glyphs_app_mode {

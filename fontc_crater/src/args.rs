@@ -2,7 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 
 // this env var can be set by the runner in order to reuse git checkouts
 // between runs.
@@ -21,12 +21,26 @@ pub(super) enum Commands {
     Ci(CiArgs),
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, ValueEnum)]
+#[value(rename_all = "lower")]
+pub(super) enum RunMode {
+    /// Run the default tools (`fontc` and `fontmake` directly), plus `fontc`
+    /// and `fontmake` via `gftools`.
+    GfTools,
+    
+    /// Run only the default tools (reduces target count when running locally).
+    Default,
+    
+    /// Run only in Glyphs app version comparison mode.
+    GlyphsApp,
+}
+
 #[derive(Debug, PartialEq, clap::Args)]
 pub(super) struct CiArgs {
     /// Path to a json list of repos + revs to run.
     pub(super) to_run: PathBuf,
 
-    /// Directory to store font sources and the google/fonts repo.
+    /// Directory to store font sources and the `google/fonts` repo.
     ///
     /// Reusing this directory saves us having to clone all the repos on each run.
     ///
@@ -40,21 +54,17 @@ pub(super) struct CiArgs {
     /// Directory where results are written.
     ///
     /// This should be consistent between runs.
+    ///
+    /// When using Glyphs app mode, it is recommended to specify a separate
+    /// directory from the one used for other results.
     #[arg(short = 'o', long = "out")]
     pub(super) out_dir: PathBuf,
 
-    /// gftools mode (disable to reduce target count when running locally).
-    #[arg(long, default_value = "true", action = clap::ArgAction::Set)]
-    pub(super) gftools: bool,
+    /// Specify which tools to run.
+    #[arg(long, value_enum, default_value_t = RunMode::GfTools)]
+    pub(super) mode: RunMode,
 
-    /// Glyphs app mode (enable to compare the output of two Glyphs versions
-    /// when running locally).
-    ///
-    /// Currently, this implicitly disables both `default` and `gftools` modes.
-    #[arg(long, default_value = "false", action = clap::ArgAction::Set)]
-    pub(super) glyphs_app: bool,
-
-    /// only generate html (for the provided out_dir)
+    /// Only generate html (for the provided out_dir).
     #[arg(long)]
     pub(super) html_only: bool,
 }
