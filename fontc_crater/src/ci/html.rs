@@ -586,103 +586,104 @@ fn make_error_report(
     let new_tool_name = tool_name(mode, true);
     let old_tool_name = tool_name(mode, false);
 
-    let new_tool = (current_new_tool.len() - current_both.len() > 0)
-        .then(|| {
-            make_error_report_group(
-                new_tool_name.as_str(),
-                "new-tool",
+    let new_tool = if current_new_tool.len() - current_both.len() > 0 {
+        make_error_report_group(
+            new_tool_name.as_str(),
+            "new-tool",
+            current_new_tool
+                .keys()
+                .copied()
+                .filter(|k| !current_both.contains(k))
+                .map(|k| (k, !prev_new_tool.contains_key(k))),
+            |path| {
                 current_new_tool
-                    .keys()
+                    .get(path)
                     .copied()
-                    .filter(|k| !current_both.contains(k))
-                    .map(|k| (k, !prev_new_tool.contains_key(k))),
-                |path| {
-                    current_new_tool
-                        .get(path)
-                        .copied()
-                        .map(format_compiler_error)
-                        .unwrap_or_default()
-                },
-                sources,
-            )
-        })
-        .unwrap_or_default();
+                    .map(format_compiler_error)
+                    .unwrap_or_default()
+            },
+            sources,
+        )
+    } else {
+        Default::default()
+    };
 
-    let old_tool = (current_old_tool.len() - current_both.len() > 0)
-        .then(|| {
-            make_error_report_group(
-                old_tool_name.as_str(),
-                "old-tool",
+    let old_tool = if current_old_tool.len() - current_both.len() > 0 {
+        make_error_report_group(
+            old_tool_name.as_str(),
+            "old-tool",
+            current_old_tool
+                .keys()
+                .copied()
+                .filter(|k| (!current_both.contains(k)))
+                .map(|k| (k, !prev_old_tool.contains_key(k))),
+            |path| {
                 current_old_tool
-                    .keys()
+                    .get(path)
                     .copied()
-                    .filter(|k| (!current_both.contains(k)))
-                    .map(|k| (k, !prev_old_tool.contains_key(k))),
-                |path| {
-                    current_old_tool
-                        .get(path)
-                        .copied()
-                        .map(format_compiler_error)
-                        .unwrap_or_default()
-                },
-                sources,
-            )
-        })
-        .unwrap_or_default();
-    let both = (!current_both.is_empty())
-        .then(|| {
-            make_error_report_group(
-                "both",
-                "both",
-                current_both
-                    .iter()
-                    .copied()
-                    .map(|k| (k, !prev_both.contains(k))),
-                |path| {
+                    .map(format_compiler_error)
+                    .unwrap_or_default()
+            },
+            sources,
+        )
+    } else {
+        Default::default()
+    };
+
+    let both = if !current_both.is_empty() {
+        make_error_report_group(
+            "both",
+            "both",
+            current_both
+                .iter()
+                .copied()
+                .map(|k| (k, !prev_both.contains(k))),
+            |path| {
                     let new_tool_err = current_new_tool
                         .get(path)
-                        .copied()
-                        .map(format_compiler_error)
-                        .unwrap_or_default();
-                    let old_tool_err = current_old_tool
-                        .get(path)
-                        .copied()
-                        .map(format_compiler_error)
-                        .unwrap_or_default();
-
-                    html! {
-                        .h5 { (new_tool_name) }
-                        (new_tool_err)
-                        .h5 { (old_tool_name) }
-                        (old_tool_err)
-                    }
-                },
-                sources,
-            )
-        })
-        .unwrap_or_default();
-
-    let other = (!current_other.is_empty())
-        .then(|| {
-            make_error_report_group(
-                "other",
-                "other",
-                current_other
-                    .keys()
                     .copied()
-                    .map(|k| (k, !prev_other.contains_key(k))),
-                |path| {
-                    let msg = current_other.get(path).copied().unwrap_or_default();
-                    html! {
-                        div.backtrace {
-                            (msg)
-                        }
+                    .map(format_compiler_error)
+                    .unwrap_or_default();
+                let old_tool_err = current_old_tool
+                    .get(path)
+                    .copied()
+                    .map(format_compiler_error)
+                    .unwrap_or_default();
+
+                html! {
+                    .h5 { (new_tool_name) }
+                    (new_tool_err)
+                    .h5 { (old_tool_name) }
+                    (old_tool_err)
+                }
+            },
+            sources,
+        )
+    } else {
+        Default::default()
+    };
+
+    let other = if !current_other.is_empty() {
+        make_error_report_group(
+            "other",
+            "other",
+            current_other
+                .keys()
+                .copied()
+                .map(|k| (k, !prev_other.contains_key(k))),
+            |path| {
+                let msg = current_other.get(path).copied().unwrap_or_default();
+                html! {
+                    div.backtrace {
+                        (msg)
                     }
-                },
-                sources,
-            )
-        })
-        .unwrap_or_default();
+                }
+            },
+            sources,
+        )
+    } else {
+        Default::default()
+    };
 
     html! {
         (new_tool)
