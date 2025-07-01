@@ -66,7 +66,7 @@ pub(super) fn run_ci(args: &CiArgs) -> Result<(), Error> {
         super::ttx_diff_runner::assert_can_run_script();
         run_crater_and_save_results(args)?;
     }
-    html::generate(&args.out_dir)?;
+    html::generate(&args.out_dir, args.mode)?;
     // now we want to generate an html report, based on this info.
     Ok(())
 }

@@ -9,10 +9,12 @@ use std::{
 };
 
 use crate::{
+    args,
     error::Error,
     ttx_diff_runner::{CompilerFailure, DiffError, DiffOutput, DiffValue},
     BuildType, Target,
 };
+use crate::ci::RunMode;
 use chrono::{DateTime, Utc};
 use maud::{html, Markup, PreEscaped};
 
@@ -22,7 +24,7 @@ static HTML_FILE: &str = "index.html";
 const NEW_TOOL_NAME: &str = "new_tool";
 const OLD_TOOL_NAME: &str = "old_tool";
 
-pub(super) fn generate(target_dir: &Path) -> Result<(), Error> {
+pub(super) fn generate(target_dir: &Path, mode: args::RunMode) -> Result<(), Error> {
     let summary_path = target_dir.join(super::SUMMARY_FILE);
     let summary: Vec<RunSummary> = crate::try_read_json(&summary_path)?;
     let sources_path = target_dir.join(super::SOURCES_FILE);
@@ -40,7 +42,7 @@ pub(super) fn generate(target_dir: &Path) -> Result<(), Error> {
         })
         .collect::<Result<HashMap<_, _>, _>>()?;
 
-    let html_text = make_html(&summary, &sources, &details, &failures)?;
+    let html_text = make_html(&summary, &sources, &details, &failures, mode)?;
     let outpath = target_dir.join(HTML_FILE);
     crate::try_write_str(&html_text, &outpath)
 }
@@ -50,7 +52,13 @@ fn make_html(
     sources: &BTreeMap<PathBuf, String>,
     results: &HashMap<DateTime<Utc>, DiffResults>,
     repo_failures: &BTreeMap<String, String>,
+    mode: args::RunMode,
 ) -> Result<String, Error> {
+    let new_tool_name = tool_name(mode, true);
+    let old_tool_name = tool_name(mode, false);
+    let new_tool_head = format!("{new_tool_name} 💥");
+    let old_tool_head = format!("{old_tool_name} 💥");
+    let introduction = make_introduction(mode);
     let table_body = make_table_body(summary);
     let css = include_str!("../../resources/style.css");
     let table = html! {
@@ -61,8 +69,8 @@ fn make_html(
                     th.rev scope="col" { "rev" }
                     th.total scope="col" { "targets" }
                     th.identical scope="col" { "identical" }
-                    th.fontc_err scope="col" { "fontc 💥" }
-                    th.fontmake_err scope="col" { "fontmake 💥" }
+                    th.new_tool_err scope="col" { (new_tool_head) }
+                    th.old_tool_err scope="col" { (old_tool_head) }
                     th.both_err scope="col" { "both 💥" }
                     th.other_err scope="col" { "other 💥" }
                     th.diff_erc scope="col" { "similarity %" }
@@ -76,6 +84,7 @@ fn make_html(
             results.get(&current.began).unwrap(),
             results.get(&prev.began).unwrap(),
             sources,
+            mode,
         ),
         _ => html!(),
     };
@@ -103,6 +112,8 @@ fn make_html(
     ",
     );
 
+    let new_tool_link_title = format!("{new_tool_name} only");
+    let old_tool_link_title = format!("{old_tool_name} only");
     let raw_html = html! {
         (maud::DOCTYPE)
         html {
@@ -115,11 +126,7 @@ fn make_html(
             body {
                 h1 { "fontc_crater" }
                 div #explain {
-                    "Compiling all known Google Fonts that have sources with both "
-                    {a href = "https://github.com/googlefonts/fontc" { "fontc" } }
-                    " and "
-                    {a href = "https://github.com/googlefonts/fontmake" { "fontmake" } }
-                    ", comparing the results."
+                    (introduction)
                 }
                 (table)
                 div #explain {
@@ -128,9 +135,9 @@ fn make_html(
                     ", "
                     {a href = "#diff-report" { "per-target diffs" } }
                     ", or compile failures for "
-                    {a href = "#fontc-failures" { "fontc only" } }
+                    {a href = "#new-tool-failures" { (new_tool_link_title) } }
                     ", "
-                    {a href = "#fontmake-failures" { "fontmake only" } }
+                    {a href = "#old-tool-failures" { (old_tool_link_title) } }
                     ", "
                     {a href = "#both-failures" { "both compilers" } }
                 }
@@ -141,6 +148,17 @@ fn make_html(
     }
     .into_string();
     tidy_html(&raw_html)
+}
+
+fn tool_name(mode: args::RunMode, is_new: bool) -> String {
+    let name;
+    if mode == RunMode::GlyphsApp {
+        name = if is_new { "Glyphs 4" } else { "Glyphs 3" };
+    } else {
+        name = if is_new { "fontc" } else { "fontmake" };
+    }
+    
+    name.to_string()
 }
 
 fn tidy_html(raw_html: &str) -> Result<String, Error> {
@@ -155,6 +173,25 @@ fn tidy_html(raw_html: &str) -> Result<String, Error> {
         ..Default::default()
     };
     tidier::format(raw_html, false, &opts).map_err(Into::into)
+}
+
+fn make_introduction(mode: args::RunMode) -> Markup {
+    if mode == RunMode::GlyphsApp {
+        return html! {
+            "Compiling all known Google Fonts that have `.glyphs` or "
+            "`.glyphspackage` sources with version 3 and version 4 of " 
+            {a href = "https://glyphsapp.com" { "Glyphs app" } }
+            ", comparing the results."
+        }
+    } else {
+        return html! {
+            "Compiling all known Google Fonts that have sources with both "
+            {a href = "https://github.com/googlefonts/fontc" { "fontc" } }
+            " and "
+            {a href = "https://github.com/googlefonts/fontmake" { "fontmake" } }
+            ", comparing the results."
+        }
+    }
 }
 
 fn make_table_body(runs: &[RunSummary]) -> Markup {
@@ -174,12 +211,12 @@ fn make_table_body(runs: &[RunSummary]) -> Markup {
             prev.map(|p| p.stats.identical as i32),
             More::IsBetter,
         );
-        let fontc_err_diff = make_delta_decoration(
+        let new_tool_err_diff = make_delta_decoration(
             run.stats.new_tool_failed as i32,
             prev.map(|p| p.stats.new_tool_failed as i32),
             More::IsWorse,
         );
-        let fontmake_err_diff = make_delta_decoration(
+        let old_tool_err_diff = make_delta_decoration(
             run.stats.old_tool_failed as i32,
             prev.map(|p| p.stats.old_tool_failed as i32),
             More::IsWorse,
@@ -210,15 +247,15 @@ fn make_table_body(runs: &[RunSummary]) -> Markup {
         let short_rev = run.fontc_rev.get(..16).unwrap_or(run.fontc_rev.as_str());
         let err_cells = if is_most_recent {
             html! {
-                td.fontc_err { a href = "#fontc-failures" {  (run.stats.new_tool_failed) " " (fontc_err_diff)  } }
-                td.fontmake_err { a href = "#fontmake-failures" {  (run.stats.old_tool_failed) " " (fontmake_err_diff)  } }
+                td.new_tool_err { a href = "#new-tool-failures" {  (run.stats.new_tool_failed) " " (new_tool_err_diff)  } }
+                td.old_tool_err { a href = "#old-tool-failures" {  (run.stats.old_tool_failed) " " (old_tool_err_diff)  } }
                 td.both_err { a href = "#both-failures" {  (run.stats.both_failed) " " (both_err_diff) } }
                 td.other_err { a href = "#other-failures" {  (run.stats.other_failure) " " (other_err_diff)  } }
             }
         } else {
             html! {
-            td.fontc_err {  (run.stats.new_tool_failed) " " (fontc_err_diff)  }
-            td.fontmake_err {  (run.stats.old_tool_failed) " " (fontmake_err_diff)  }
+            td.new_tool_err {  (run.stats.new_tool_failed) " " (new_tool_err_diff)  }
+            td.old_tool_err {  (run.stats.old_tool_failed) " " (old_tool_err_diff)  }
             td.both_err {  (run.stats.both_failed) " " (both_err_diff) }
             td.other_err {  (run.stats.other_failure) " " (other_err_diff)  }
             }
@@ -295,11 +332,12 @@ fn make_detailed_report(
     current: &DiffResults,
     prev: &DiffResults,
     sources: &BTreeMap<PathBuf, String>,
+    mode: args::RunMode,
 ) -> Markup {
     let reports = vec![
         make_diff_report(current, prev, sources),
         make_summary_report(current),
-        make_error_report(current, prev, sources),
+        make_error_report(current, prev, sources, mode),
     ];
     html! {
         @for report in reports {
@@ -524,37 +562,42 @@ fn make_error_report(
     current: &DiffResults,
     prev: &DiffResults,
     sources: &BTreeMap<PathBuf, String>,
+    mode: args::RunMode,
 ) -> Markup {
-    let current_fontc = get_compiler_failures(current, NEW_TOOL_NAME);
-    let prev_fontc = get_compiler_failures(prev, NEW_TOOL_NAME);
-    let current_fontmake = get_compiler_failures(current, OLD_TOOL_NAME);
-    let prev_fontmake = get_compiler_failures(prev, OLD_TOOL_NAME);
+    let current_new_tool = get_compiler_failures(current, NEW_TOOL_NAME);
+    let prev_new_tool = get_compiler_failures(prev, NEW_TOOL_NAME);
+    let current_old_tool = get_compiler_failures(current, OLD_TOOL_NAME);
+    let prev_old_tool = get_compiler_failures(prev, OLD_TOOL_NAME);
 
-    let current_both = current_fontc
+    let current_both = current_new_tool
         .keys()
         .copied()
-        .filter(|k| current_fontmake.contains_key(k))
+        .filter(|k| current_old_tool.contains_key(k))
         .collect::<BTreeSet<_>>();
-    let prev_both = prev_fontc
+    let prev_both = prev_new_tool
         .keys()
         .copied()
-        .filter(|k| prev_fontmake.contains_key(k))
+        .filter(|k| prev_old_tool.contains_key(k))
         .collect::<BTreeSet<_>>();
 
     let current_other = get_other_failures(current);
     let prev_other = get_other_failures(prev);
+    
+    let new_tool_name = tool_name(mode, true);
+    let old_tool_name = tool_name(mode, false);
 
-    let fontc = (current_fontc.len() - current_both.len() > 0)
+    let new_tool = (current_new_tool.len() - current_both.len() > 0)
         .then(|| {
             make_error_report_group(
-                "fontc",
-                current_fontc
+                new_tool_name.as_str(),
+                "new-tool",
+                current_new_tool
                     .keys()
                     .copied()
                     .filter(|k| !current_both.contains(k))
-                    .map(|k| (k, !prev_fontc.contains_key(k))),
+                    .map(|k| (k, !prev_new_tool.contains_key(k))),
                 |path| {
-                    current_fontc
+                    current_new_tool
                         .get(path)
                         .copied()
                         .map(format_compiler_error)
@@ -565,17 +608,18 @@ fn make_error_report(
         })
         .unwrap_or_default();
 
-    let fontmake = (current_fontmake.len() - current_both.len() > 0)
+    let old_tool = (current_old_tool.len() - current_both.len() > 0)
         .then(|| {
             make_error_report_group(
-                "fontmake",
-                current_fontmake
+                old_tool_name.as_str(),
+                "old-tool",
+                current_old_tool
                     .keys()
                     .copied()
                     .filter(|k| (!current_both.contains(k)))
-                    .map(|k| (k, !prev_fontmake.contains_key(k))),
+                    .map(|k| (k, !prev_old_tool.contains_key(k))),
                 |path| {
-                    current_fontmake
+                    current_old_tool
                         .get(path)
                         .copied()
                         .map(format_compiler_error)
@@ -589,27 +633,28 @@ fn make_error_report(
         .then(|| {
             make_error_report_group(
                 "both",
+                "both",
                 current_both
                     .iter()
                     .copied()
                     .map(|k| (k, !prev_both.contains(k))),
                 |path| {
-                    let fontc_err = current_fontc
+                    let new_tool_err = current_new_tool
                         .get(path)
                         .copied()
                         .map(format_compiler_error)
                         .unwrap_or_default();
-                    let fontmake_err = current_fontmake
+                    let old_tool_err = current_old_tool
                         .get(path)
                         .copied()
                         .map(format_compiler_error)
                         .unwrap_or_default();
 
                     html! {
-                        .h5 { "fontc" }
-                        (fontc_err)
-                        .h5 { "fontmake" }
-                        (fontmake_err)
+                        .h5 { (new_tool_name) }
+                        (new_tool_err)
+                        .h5 { (old_tool_name) }
+                        (old_tool_err)
                     }
                 },
                 sources,
@@ -620,6 +665,7 @@ fn make_error_report(
     let other = (!current_other.is_empty())
         .then(|| {
             make_error_report_group(
+                "other",
                 "other",
                 current_other
                     .keys()
@@ -639,8 +685,8 @@ fn make_error_report(
         .unwrap_or_default();
 
     html! {
-        (fontc)
-        (fontmake)
+        (new_tool)
+        (old_tool)
         (both)
         (other)
     }
@@ -765,13 +811,14 @@ fn format_diff_report_detail_table(current: &DiffOutput, prev: Option<&DiffOutpu
 
 fn make_error_report_group<'a>(
     group_name: &str,
+    id_prefix: &str,
     paths_and_if_is_new_error: impl Iterator<Item = (&'a Target, bool)>,
     details: impl Fn(&Target) -> Markup,
     sources: &BTreeMap<PathBuf, String>,
 ) -> Markup {
     let items = make_error_report_group_items(paths_and_if_is_new_error, details, sources);
 
-    let elem_id = format!("{group_name}-failures");
+    let elem_id = format!("{id_prefix}-failures");
     html! {
         div.error_report {
             h3 id=(elem_id) { (group_name) " failures" }
