@@ -334,8 +334,10 @@ fn make_detailed_report(
     sources: &BTreeMap<PathBuf, String>,
     mode: args::RunMode,
 ) -> Markup {
+    let new_tool_name = tool_name(mode, true);
+    let old_tool_name = tool_name(mode, false);
     let reports = vec![
-        make_diff_report(current, prev, sources),
+        make_diff_report(current, prev, sources, &new_tool_name, &old_tool_name),
         make_summary_report(current),
         make_error_report(current, prev, sources, mode),
     ];
@@ -448,6 +450,8 @@ fn make_diff_report(
     current: &DiffResults,
     prev: &DiffResults,
     sources: &BTreeMap<PathBuf, String>,
+    new_tool_name: &str,
+    old_tool_name: &str,
 ) -> Markup {
     fn get_total_diff_ratios(results: &DiffResults) -> BTreeMap<&Target, f32> {
         results
@@ -494,10 +498,11 @@ fn make_diff_report(
 
         let repo_url = get_repo_url(target);
         let ttx_command = target.repro_command(repo_url);
-        let onclick = format!("event.preventDefault(); copyText(\"{ttx_command}\");",);
+        let onclick = format!("event.preventDefault(); copyText(\"{ttx_command}\");");
         let decoration = make_delta_decoration(*ratio, prev_ratio, More::IsBetter);
         let changed_tag_list = list_different_tables(diff_details).unwrap_or_default();
-        let diff_table = format_diff_report_detail_table(diff_details, prev_details);
+        let diff_table =
+            format_diff_report_detail_table(diff_details, prev_details, new_tool_name, old_tool_name);
 
         let details = html! {
             div.diff_info {
@@ -715,7 +720,12 @@ fn list_different_tables(current: &DiffOutput) -> Option<String> {
 }
 
 /// for a given diff, the detailed information on per-table changes
-fn format_diff_report_detail_table(current: &DiffOutput, prev: Option<&DiffOutput>) -> Markup {
+fn format_diff_report_detail_table(
+    current: &DiffOutput,
+    prev: Option<&DiffOutput>,
+    new_tool_name: &str,
+    old_tool_name: &str,
+) -> Markup {
     let value_decoration = |table: &str, value: DiffValue| -> Markup {
         let prev_value = match prev {
             None => None,
@@ -801,7 +811,20 @@ fn format_diff_report_detail_table(current: &DiffOutput, prev: Option<&DiffOutpu
                                 (value.as_n_of_bytes()) "B " ( {value_decoration(table, value) })
                             }
                         } @else {
-                            td.table_diff_value { (value) " " ( {value_decoration(table, value) }) }
+                            td.table_diff_value {
+                                @match value {
+                                    DiffValue::Ratio(_) => { (value) " " ( {value_decoration(table, value) }) },
+                                    DiffValue::Only(compiler) => {
+                                        // Replace generic `new_tool`/`old_tool`
+                                        // string with actual tool name.
+                                        @if compiler == NEW_TOOL_NAME {
+                                            (new_tool_name) " only"
+                                        } @else {
+                                            (old_tool_name) " only"
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
