@@ -48,6 +48,9 @@ pub(super) struct CiArgs {
     /// although the CLI argument takes precedence.
     ///
     /// If no argument is provided, defaults to `~/.fontc_crater_cache`.
+    ///
+    /// The `ttx_diff.py` script now also supports a cache flag, so custom cache
+    /// locations can be shared.
     #[arg(short, long = "cache")]
     cache_dir: Option<PathBuf>,
 
@@ -56,11 +59,16 @@ pub(super) struct CiArgs {
     /// This should be consistent between runs.
     ///
     /// When using Glyphs app mode, it is recommended to specify a separate
-    /// directory from the one used for other results.
+    /// directory from the one used for other modes.
     #[arg(short = 'o', long = "out")]
     pub(super) out_dir: PathBuf,
 
     /// Specify which tools to run.
+    ///
+    /// Note that the default flag, `gftools`, has different semantics from the
+    /// `compare` flag of the `ttx_diff.py` script: There, `gftools` means to
+    /// _only_ run in `gftools` mode, whereas here they run in addition to the
+    /// default tools.
     #[arg(long, value_enum, default_value_t = RunMode::GfTools)]
     pub(super) mode: RunMode,
 
