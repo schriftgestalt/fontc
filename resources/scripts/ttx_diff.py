@@ -112,6 +112,11 @@ flags.DEFINE_string(
     default=None,
     help="Optional path to precompiled otl-normalizer binary",
 )
+flags.DEFINE_string(
+    "cache_path",
+    default=None,
+    help="Optional path to custom cache location for font repositories. Defaults to `~/.fontc_crater_cache`",
+)
 flags.DEFINE_enum(
     "compare",
     "default",
@@ -1305,7 +1310,7 @@ def report_errors_and_exit_if_there_were_any(errors: dict):
 # repo url as the source.
 # in this scheme we pass the path to the particular source (relative the repo root)
 # as a url fragment
-def resolve_source(source: str) -> Path:
+def resolve_source(source: str, cache_dir: Path) -> Path:
     if source.startswith("git@") or source.startswith("https://"):
         source_url = urlparse(source)
         repo_path = source_url.fragment
@@ -1313,7 +1318,7 @@ def resolve_source(source: str) -> Path:
         repo_name = source_url.path.split("/")[-1]
         sha = source_url.query
         local_repo = (
-            Path.home() / ".fontc_crater_cache" / org_name / repo_name
+            cache_dir / org_name / repo_name
         ).resolve()
         if not local_repo.parent.is_dir():
             local_repo.parent.mkdir(parents=True)
@@ -1374,7 +1379,8 @@ def main(argv):
     if len(argv) != 2:
         sys.exit("Only one argument, a source file, is expected")
 
-    source = resolve_source(argv[1]).resolve()
+    cache_dir = Path.home() / ".fontc_crater_cache" if FLAGS.cache_path is None else Path(FLAGS.cache_path).resolve()
+    source = resolve_source(argv[1], cache_dir).resolve()
 
     # Configure dependencies.
     root = Path(".").resolve()
