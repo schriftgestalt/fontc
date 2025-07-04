@@ -1,19 +1,29 @@
 #!/usr/bin/env python3
-"""Helper for comparing fontc (Rust) vs fontmake (Python) or Glyphs 3 vs 
+"""Helper for comparing `fontc` (Rust) vs `fontmake` (Python) or Glyphs 3 vs 
 Glyphs 4 binaries.
 
-Turns each into ttx, eliminates expected sources of difference and prints
+Turns each into `ttx`, eliminates expected sources of difference and prints
 a brief summary of the result.
 
-fontmake should be installed in an active virtual environment.
+`fontmake` should be installed in an active virtual environment. The easiest
+way to do this is probably with `pyenv` and its `pyenv-virtualenv` plugin (see
+https://github.com/pyenv/pyenv-virtualenv).
 
 Usage:
-    # rebuild with fontmake and fontc and compare
+    # Rebuild with `fontmake` and `fontc` and compare.
     python resources/scripts/ttx_diff.py ../OswaldFont/sources/Oswald.glyphs
 
-    # rebuild the fontc copy, reuse the prior fontmake copy (if present), and compare
-    # useful if you are making changes to fontc meant to narrow the diff
-    python resources/scripts/ttx_diff.py --rebuild new_tool ../OswaldFont/sources/Oswald.glyphs
+    # Rebuild the `fontc` copy, reuse the prior `fontmake` copy (if present), 
+    # and compare. Useful if you are making changes to `fontc` meant to narrow 
+    # the diff.
+    python resources/scripts/ttx_diff.py --rebuild fontc ../OswaldFont/sources/Oswald.glyphs
+
+    # Rebuild with `fontmake` and `fontc` (managed by `gftools`) and compare.
+    python resources/scripts/ttx_diff.py --compare gftools ../OswaldFont/sources/Oswald.glyphs
+
+    # Rebuild with Glyphs 3 and Glyphs 4 and compare. The apps do not have to
+    # be in a specific location.
+    python resources/scripts/ttx_diff.py --compare glyphsapp ../OswaldFont/sources/Oswald.glyphs
 
 JSON:
     If the `--json` flag is passed, this tool will output JSON.
@@ -22,17 +32,23 @@ JSON:
     "success", which will contain a dictionary, where keys are the tags of tables
     (or another identifier) and the value is either a float representing the
     'difference ratio' (where 1.0 means identical and 0.0 means maximally
-    dissimilar) or, if only one compiler produced that table, the name of that
-    compiler as a string.
-    For example, the output `{"success": { "GPOS": 0.99, "vmxt": "fontmake" }}`
-    means that the "GPOS" table was 99% similar, and only `fontmake` produced
-    the "vmtx" table (and all other tables were identical).
+    dissimilar) or, if only one compiler produced that table, the generic name
+    of that compiler as a string ("new_tool"|"old_tool").
+    For example, when run in `default` or `gftools` modes, the output 
+    `{"success": { "GPOS": 0.99, "vmxt": "old_tool" }}` means that the "GPOS"
+    table was 99%% similar, and only `fontmake` produced the "vmtx" table (and 
+    all other tables were identical).
 
     If one or both of the compilers fail to exit successfully, we will return a
     dictionary with the single key, "error", where the payload is a dictionary
     where keys are the name of the compiler that failed, and the body is a
     dictionary with "command" and "stderr" fields, where the "command" field
     is the command that was used to run that compiler.
+    
+Caching:
+    It is possible to specify a custom cache directory for the font
+    repositories. This is especially useful when a custom cache location is used
+    for `fontc_crater`, as the same cache can be shared.
 """
 
 import json
@@ -100,17 +116,17 @@ def eprint(*objects):
 flags.DEFINE_string(
     "config",
     default=None,
-    help="config.yaml to be passed to gftools in gftools mode",
+    help="`config.yaml` to be passed to `gftools` in `gftools` mode",
 )
 flags.DEFINE_string(
     "fontc_path",
     default=None,
-    help="Optional path to precompiled fontc binary",
+    help="Optional path to precompiled `fontc` binary",
 )
 flags.DEFINE_string(
     "normalizer_path",
     default=None,
-    help="Optional path to precompiled otl-normalizer binary",
+    help="Optional path to precompiled `otl-normalizer` binary",
 )
 flags.DEFINE_string(
     "cache_path",
@@ -121,25 +137,33 @@ flags.DEFINE_enum(
     "compare",
     "default",
     [_COMPARE_DEFAULT, _COMPARE_GFTOOLS, _COMPARE_GLYPHS_APP],
-    "Compare results using either a default build, a build managed by gftools, or two versions of the Glyphs app. Note that as of 5/21/2023 default still sets flags for fontmake to match fontc behavior.",
+    "Compare results using either a default build, a build managed by `gftools`, or two versions of the Glyphs app. Note that as of 2023-05-21 `default` still sets flags for `fontmake` to match `fontc` behavior.",
 )
 flags.DEFINE_enum(
     "rebuild",
     "both",
     ["both", NEW_TOOL_NAME, OLD_TOOL_NAME, "none"],
-    "Which compilers to rebuild with if the output appears to already exist. None is handy when playing with ttx_diff.py itself.",
+    "Which compilers to rebuild with if the output appears to already exist. `none` is handy when playing with `ttx_diff.py` itself.",
 )
 flags.DEFINE_float(
     "off_by_one_budget",
     0.1,
-    "The percentage of point (glyf) or delta (gvar) values allowed to differ by one without counting as a diff",
+    "The percentage of point (glyf) or delta (gvar) values allowed to differ by one without counting as a diff.",
 )
-flags.DEFINE_bool("json", False, "print results in machine-readable JSON format")
-flags.DEFINE_string("outdir", default=None, help="directory to store generated files")
+flags.DEFINE_bool(
+    "json",
+    False,
+    "Print results in machine-readable JSON format."
+)
+flags.DEFINE_string(
+    "outdir",
+    None,
+    "Directory to store generated files."
+)
 flags.DEFINE_bool(
     "production_names",
     True,
-    "rename glyphs to AGL-compliant names (uniXXXX, etc.) suitable for production. Disable to see the original glyph names.",
+    "Rename glyphs to AGL-compliant names (uniXXXX, etc.) suitable for production. Disable to see the original glyph names.",
 )
 
 # fontmake - and so gftools' - static builds perform overlaps removal, but fontc
@@ -1377,7 +1401,7 @@ def get_crate_path(cli_arg: Optional[str], root_dir: Path, crate_name: str) -> P
 
 def main(argv):
     if len(argv) != 2:
-        sys.exit("Only one argument, a source file, is expected")
+        sys.exit("Only one argument, a source file, is expected. Pass the `--help` flag to display usage information and available options.")
 
     cache_dir = Path.home() / ".fontc_crater_cache" if FLAGS.cache_path is None else Path(FLAGS.cache_path).resolve()
     source = resolve_source(argv[1], cache_dir).resolve()
