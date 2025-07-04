@@ -10,6 +10,8 @@ use std::{
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use crate::args::DEFAULT_CACHE_DIR;
+
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) struct Target {
     /// path to the source dir for this target (relative to the git cache root)
@@ -53,6 +55,10 @@ fn get_source_dir(source_path: &Path) -> Result<PathBuf, InvalidTargetPath> {
         path: source_path.to_owned(),
         reason: BadPathReason::NoSourceDir,
     })
+}
+
+fn default_cache_dir() -> PathBuf {
+    return Path::new(DEFAULT_CACHE_DIR).to_path_buf();
 }
 
 /// A source path must always be a file in side a directory named 'sources' or 'Sources'
@@ -140,9 +146,12 @@ impl Target {
 
     // if a target was built in a directory with a sha, the repro command
     // does not need to include that part of the directory, so remove it.
-    fn config_path_stripping_disambiguating_sha_if_necessary(&self) -> Option<String> {
+    fn config_path_stripping_disambiguating_sha_if_necessary(
+        &self,
+        cache_dir: &Path,
+    ) -> Option<String> {
         let mut path = self
-            .config_path(Path::new("~/.fontc_crater_cache"))?
+            .config_path(cache_dir)?
             .display()
             .to_string();
         // NOTE: this relies on the fact that we always trim the sha to 10 chars,
@@ -178,7 +187,7 @@ impl Target {
         result
     }
 
-    pub(crate) fn repro_command(&self, repo_url: &str) -> String {
+    pub(crate) fn repro_command(&self, repo_url: &str, cache_dir: &Path) -> String {
         let repo_url = repo_url.trim();
         let just_source_dir = self.source_dir.file_name().unwrap();
         let rel_source_path = Path::new(just_source_dir).join(&self.source);
@@ -193,19 +202,18 @@ impl Target {
         );
         if self.build == BuildType::GfTools {
             cmd.push_str(" --compare gftools");
-            // we hard code this; repro will only work if they're using default
-            // cache location
-            if let Some(config) = self.config_path_stripping_disambiguating_sha_if_necessary() {
+            if let Some(config) = self.config_path_stripping_disambiguating_sha_if_necessary(cache_dir) {
                 write!(&mut cmd, " --config {config}").unwrap();
             }
         }
         else if self.build == BuildType::GlyphsApp {
             cmd.push_str(" --compare glyphsapp");
-            // we hard code this; repro will only work if they're using default
-            // cache location
-            if let Some(config) = self.config_path_stripping_disambiguating_sha_if_necessary() {
+            if let Some(config) = self.config_path_stripping_disambiguating_sha_if_necessary(cache_dir) {
                 write!(&mut cmd, " --config {config}").unwrap();
             }
+        }
+        if cache_dir != default_cache_dir() {
+            write!(&mut cmd, " --cache_path {0}", cache_dir.display()).unwrap();
         }
         cmd
     }
@@ -372,10 +380,11 @@ mod tests {
         )
         .unwrap();
 
+        let cache_dir = default_cache_dir();
         let hmm = target
-            .config_path_stripping_disambiguating_sha_if_necessary()
+            .config_path_stripping_disambiguating_sha_if_necessary(&cache_dir)
             .unwrap();
-        assert_eq!(hmm, "~/.fontc_crater_cache/org/repo/sources/config.yaml")
+        assert_eq!(hmm, format!("{DEFAULT_CACHE_DIR}/org/repo/sources/config.yaml"))
     }
 
     #[test]
@@ -388,7 +397,8 @@ mod tests {
         )
         .unwrap();
 
-        let hmm = target.repro_command("example.com");
+        let cache_dir = default_cache_dir();
+        let hmm = target.repro_command("example.com", &cache_dir);
         assert_eq!(
             hmm,
             "python resources/scripts/ttx_diff.py 'example.com?123456789a#sources/hi.glyphs'"

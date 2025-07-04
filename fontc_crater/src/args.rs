@@ -7,7 +7,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 // this env var can be set by the runner in order to reuse git checkouts
 // between runs.
 static GIT_CACHE_DIR_VAR: &str = "CRATER_GIT_CACHE";
-const DEFAULT_CACHE_DIR: &str = "~/.fontc_crater_cache";
+pub static DEFAULT_CACHE_DIR: &'static str = "~/.fontc_crater_cache";
 
 #[derive(Debug, PartialEq, Parser)]
 #[command(about = "compile multiple fonts and report the results")]

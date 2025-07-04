@@ -24,7 +24,11 @@ static HTML_FILE: &str = "index.html";
 const NEW_TOOL_NAME: &str = "new_tool";
 const OLD_TOOL_NAME: &str = "old_tool";
 
-pub(super) fn generate(target_dir: &Path, mode: args::RunMode) -> Result<(), Error> {
+pub(super) fn generate(
+    target_dir: &Path,
+    cache_dir: &Path,
+    mode: args::RunMode,
+) -> Result<(), Error> {
     let summary_path = target_dir.join(super::SUMMARY_FILE);
     let summary: Vec<RunSummary> = crate::try_read_json(&summary_path)?;
     let sources_path = target_dir.join(super::SOURCES_FILE);
@@ -42,7 +46,7 @@ pub(super) fn generate(target_dir: &Path, mode: args::RunMode) -> Result<(), Err
         })
         .collect::<Result<HashMap<_, _>, _>>()?;
 
-    let html_text = make_html(&summary, &sources, &details, &failures, mode)?;
+    let html_text = make_html(&summary, &sources, &details, &failures, cache_dir, mode)?;
     let outpath = target_dir.join(HTML_FILE);
     crate::try_write_str(&html_text, &outpath)
 }
@@ -52,6 +56,7 @@ fn make_html(
     sources: &BTreeMap<PathBuf, String>,
     results: &HashMap<DateTime<Utc>, DiffResults>,
     repo_failures: &BTreeMap<String, String>,
+    cache_dir: &Path,
     mode: args::RunMode,
 ) -> Result<String, Error> {
     let new_tool_name = tool_name(mode, true);
@@ -84,6 +89,7 @@ fn make_html(
             results.get(&current.began).unwrap(),
             results.get(&prev.began).unwrap(),
             sources,
+            cache_dir,
             mode,
         ),
         _ => html!(),
@@ -332,14 +338,22 @@ fn make_detailed_report(
     current: &DiffResults,
     prev: &DiffResults,
     sources: &BTreeMap<PathBuf, String>,
+    cache_dir: &Path,
     mode: args::RunMode,
 ) -> Markup {
     let new_tool_name = tool_name(mode, true);
     let old_tool_name = tool_name(mode, false);
     let reports = vec![
-        make_diff_report(current, prev, sources, &new_tool_name, &old_tool_name),
+        make_diff_report(
+            current,
+            prev,
+            sources,
+            cache_dir,
+            &new_tool_name,
+            &old_tool_name,
+        ),
         make_summary_report(current),
-        make_error_report(current, prev, sources, mode),
+        make_error_report(current, prev, sources, cache_dir, mode),
     ];
     html! {
         @for report in reports {
@@ -450,6 +464,7 @@ fn make_diff_report(
     current: &DiffResults,
     prev: &DiffResults,
     sources: &BTreeMap<PathBuf, String>,
+    cache_dir: &Path,
     new_tool_name: &str,
     old_tool_name: &str,
 ) -> Markup {
@@ -497,7 +512,7 @@ fn make_diff_report(
         }
 
         let repo_url = get_repo_url(target);
-        let ttx_command = target.repro_command(repo_url);
+        let ttx_command = target.repro_command(repo_url, cache_dir);
         let onclick = format!("event.preventDefault(); copyText(\"{ttx_command}\");");
         let decoration = make_delta_decoration(*ratio, prev_ratio, More::IsBetter);
         let changed_tag_list = list_different_tables(diff_details).unwrap_or_default();
@@ -567,6 +582,7 @@ fn make_error_report(
     current: &DiffResults,
     prev: &DiffResults,
     sources: &BTreeMap<PathBuf, String>,
+    cache_dir: &Path,
     mode: args::RunMode,
 ) -> Markup {
     let current_new_tool = get_compiler_failures(current, NEW_TOOL_NAME);
@@ -608,6 +624,7 @@ fn make_error_report(
                     .unwrap_or_default()
             },
             sources,
+            cache_dir,
         )
     } else {
         Default::default()
@@ -630,6 +647,7 @@ fn make_error_report(
                     .unwrap_or_default()
             },
             sources,
+            cache_dir,
         )
     } else {
         Default::default()
@@ -663,6 +681,7 @@ fn make_error_report(
                 }
             },
             sources,
+            cache_dir,
         )
     } else {
         Default::default()
@@ -685,6 +704,7 @@ fn make_error_report(
                 }
             },
             sources,
+            cache_dir,
         )
     } else {
         Default::default()
@@ -839,8 +859,9 @@ fn make_error_report_group<'a>(
     paths_and_if_is_new_error: impl Iterator<Item = (&'a Target, bool)>,
     details: impl Fn(&Target) -> Markup,
     sources: &BTreeMap<PathBuf, String>,
+    cache_dir: &Path,
 ) -> Markup {
-    let items = make_error_report_group_items(paths_and_if_is_new_error, details, sources);
+    let items = make_error_report_group_items(paths_and_if_is_new_error, details, sources, cache_dir);
 
     let elem_id = format!("{id_prefix}-failures");
     html! {
@@ -857,6 +878,7 @@ fn make_error_report_group_items<'a>(
     paths_and_if_is_new_error: impl Iterator<Item = (&'a Target, bool)>,
     details: impl Fn(&Target) -> Markup,
     sources: &BTreeMap<PathBuf, String>,
+    cache_dir: &Path,
 ) -> Markup {
     let get_repo_url = |id: &Target| {
         sources
@@ -866,7 +888,7 @@ fn make_error_report_group_items<'a>(
     };
     let make_repro_command = |target: &Target| {
         let url = get_repo_url(target);
-        let ttx_command = target.repro_command(url);
+        let ttx_command = target.repro_command(url, cache_dir);
         format!("event.preventDefault(); copyText(\"{ttx_command}\");",)
     };
     html! {
@@ -887,6 +909,7 @@ fn make_error_report_group_items<'a>(
         }
     }
 }
+
 fn get_other_failures(results: &DiffResults) -> BTreeMap<&Target, &str> {
     results
         .failure
