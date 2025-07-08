@@ -1411,10 +1411,14 @@ def main(argv):
     if root.name != FONTC_NAME:
         sys.exit("Expected to be at the root of fontc")
 
-    fontc_bin_path = get_crate_path(FLAGS.fontc_path, root, FONTC_NAME)
-    otl_bin_path = get_crate_path(FLAGS.normalizer_path, root, "otl-normalizer")
+    compare = FLAGS.compare
+    
+    fontc_bin_path = None
+    if compare != _COMPARE_GLYPHS_APP:
+        get_crate_path(FLAGS.fontc_path, root, FONTC_NAME)
+        assert fontc_bin_path.is_file(), f"fontc path '{fontc_bin_path}' does not exist"
 
-    assert fontc_bin_path.is_file(), f"fontc path '{fontc_bin_path}' does not exist"
+    otl_bin_path = get_crate_path(FLAGS.normalizer_path, root, "otl-normalizer")
     assert otl_bin_path.is_file(), f"normalizer path '{otl_bin_path}' does not exist"
 
     if shutil.which(FONTMAKE_NAME) is None:
@@ -1422,8 +1426,6 @@ def main(argv):
     if shutil.which(TTX_NAME) is None:
         sys.exit("No ttx")
 
-    compare = FLAGS.compare
-    
     glyphs_3_proxy = None
     glyphs_4_proxy = None
     if compare == _COMPARE_GLYPHS_APP:
