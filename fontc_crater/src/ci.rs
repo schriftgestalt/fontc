@@ -101,8 +101,12 @@ fn run_crater_and_save_results(args: &CiArgs) -> Result<(), Error> {
     log::info!("using cache dir {}", cache_dir.display());
     let results_cache = ResultsCache::in_dir(&cache_dir);
 
+    let mode = args.mode;
     if let Some(last_run) = prev_runs.last() {
-        if last_run.fontc_rev == fontc_rev
+        if mode == RunMode::GlyphsApp {
+            log::info!("running in Glyphs app mode, continuing even if no changes since last run");
+        }
+        else if last_run.fontc_rev == fontc_rev
             && input_file_sha == last_run.input_file_sha
             && pip_freeze_sha == last_run.pip_freeze_sha
         {
@@ -126,7 +130,6 @@ fn run_crater_and_save_results(args: &CiArgs) -> Result<(), Error> {
     log::info!("compiled fontc to {}", fontc_path.display());
     log::info!("compiled otl-normalizeer to {}", normalizer_path.display());
 
-    let mode = args.mode;
     let ResolvedTargets {
         mut targets,
         source_repos,
