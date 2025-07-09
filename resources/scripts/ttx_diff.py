@@ -133,6 +133,26 @@ flags.DEFINE_string(
     default=None,
     help="Optional path to custom cache location for font repositories. Defaults to `~/.fontc_crater_cache`",
 )
+flags.DEFINE_string(
+    "new_glyphs_version",
+    default="4",
+    help="Optional version string for the new Glyphs version. Must contain the major version. Can be specified further with the build version, separated by a period (e. g. '4.3837').",
+)
+flags.DEFINE_string(
+    "new_glyphs_path",
+    default=None,
+    help="Optional path to the application bundle of the new Glyphs version. You should specify this if the app is not yet running. Otherwise, the bundle identifier will be used to launch the app.",
+)
+flags.DEFINE_string(
+    "old_glyphs_version",
+    default="3",
+    help="Optional version string for the old Glyphs version. Must contain the major version. Can be specified further with the build version, separated by a period (e. g. '3.3343').",
+)
+flags.DEFINE_string(
+    "old_glyphs_path",
+    default=None,
+    help="Optional path to the application bundle of the old Glyphs version. You should specify this if the app is not yet running. Otherwise, the bundle identifier will be used to launch the app.",
+)
 flags.DEFINE_enum(
     "compare",
     "default",
@@ -467,11 +487,13 @@ def copy(old, new):
 #===============================================================================
 
 
-class GlyphsVersion(IntEnum):
-    v3 = 3
-    v4 = 4
+# Initial number of tries to establish a JSTalk connection to an already running
+# instance of Glyphs.app.
+INITIAL_CONNECTION_TRIES = 3
 
-# Maximum number of tries to establish a JSTalk connection to Glyphs.app.
+
+# Maximum number of tries to establish a JSTalk connection to a Glyphs.app
+# instance that we just launched.
 MAX_CONNECTION_TRIES = 10
 
 
@@ -484,25 +506,35 @@ def print_if_not_json(message: str):
 
 # This function has been adapted from `Glyphs remote scripts/Glyphs.py`
 # in the `https://github.com/schriftgestalt/GlyphsSDK` repository.
-def application(glyphsVersion):
-    registeredName = f"com.GeorgSeifert.Glyphs{glyphsVersion}"
+def application(version_string: str, bundle_path: str = None) -> NSDistantObject:
+    registered_name = f"com.GeorgSeifert.Glyphs{version_string}"
 
     # First, try to establish a connection to a running app matching the
     # registered name. We need only a low number of maximum tries because we
     # would not have to wait for the app to launch.
-    proxy = applicationProxy(registeredName, 3)
+    proxy = application_proxy(registered_name, INITIAL_CONNECTION_TRIES)
     if proxy is not None:
         return proxy
 
     # There is no running app, or another error occurred. Try to launch the app.
+    launch_option = ""
+    if bundle_path is not None:
+        print_if_not_json(f"Opening application at {bundle_path}")
+        launch_option = f"-a '{bundle_path}'"
+    else:
+        # We need to remove the build number from the version string, if 
+        # present, as bundle identifiers do not include them.
+        bundle_identifier = registered_name.rsplit('.', 1)[0]
+        print_if_not_json(f"Opening application for {bundle_identifier}")
+        launch_option = f"-b {bundle_identifier}"
+
     # `-g` opens the application in the background.
     # `-j` opens the application hidden (its windows are not visible).
-    print_if_not_json(f"Opening application for {registeredName}")
-    os.system(f"open -b {registeredName} -g -j")
+    os.system(f"open {launch_option} -g -j")
 
     # Try to establish a connection to the running app.
     # Return the value even if it is `None`.
-    return applicationProxy(registeredName, MAX_CONNECTION_TRIES)
+    return application_proxy(registered_name, MAX_CONNECTION_TRIES)
 
 
 # This function has been adapted from `Glyphs remote scripts/Glyphs.py`
@@ -510,19 +542,19 @@ def application(glyphsVersion):
 #
 # The registered name should have the following format:
 #
-#     com.GeorgSeifert.Glyphs(V)[BBBB]
+#     com.GeorgSeifert.Glyphs(V)[.BBBB]
 #
 # `V` is the major version (currently 3 or 4).
 # `BBBB` is an optional build number (e. g. 3343 for Glyphs 3.3.1).
 #
 # Returns `None` if the connection could not be established.
-def applicationProxy(registeredName, max_tries):
+def application_proxy(registered_name: str, max_tries: int) -> NSDistantObject:
     conn = None
     tries = 1
 
-    print_if_not_json(f"Looking for a JSTalk connection to {registeredName}")
+    print_if_not_json(f"Looking for a JSTalk connection to {registered_name}")
     while ((conn is None) and (tries < max_tries)):
-        conn = NSConnection.connectionWithRegisteredName_host_(registeredName, None)
+        conn = NSConnection.connectionWithRegisteredName_host_(registered_name, None)
         tries = tries + 1
 
         if (not conn):
@@ -530,7 +562,7 @@ def applicationProxy(registeredName, max_tries):
             time.sleep(1)
 
     if (not conn):
-        print_if_not_json(f"Failed to find a JSTalk connection to {registeredName}")
+        print_if_not_json(f"Failed to find a JSTalk connection to {registered_name}")
         return None
 
     return conn.rootProxy()
@@ -1456,12 +1488,12 @@ def main(argv):
     glyphs_3_proxy = None
     glyphs_4_proxy = None
     if compare == _COMPARE_GLYPHS_APP:
-        glyphs_3_proxy = application(GlyphsVersion.v3)
+        glyphs_3_proxy = application(FLAGS.old_glyphs_version, FLAGS.old_glyphs_path)
         if glyphs_3_proxy == None:
-            sys.exit("No JSTalk connection to Glyphs 3")
-        glyphs_4_proxy = application(GlyphsVersion.v4)
+            sys.exit("No JSTalk connection to Glyphs {FLAGS.old_glyphs_version}")
+        glyphs_4_proxy = application(FLAGS.new_glyphs_version, FLAGS.new_glyphs_path)
         if glyphs_4_proxy == None:
-            sys.exit("No JSTalk connection to Glyphs 4")
+            sys.exit("No JSTalk connection to Glyphs {FLAGS.new_glyphs_version}")
 
     # Keep names generic if possible.
     old_tool_name = OLD_TOOL_NAME
