@@ -485,25 +485,52 @@ def print_if_not_json(message: str):
 # This function has been adapted from `Glyphs remote scripts/Glyphs.py`
 # in the `https://github.com/schriftgestalt/GlyphsSDK` repository.
 def application(glyphsVersion):
+    registeredName = f"com.GeorgSeifert.Glyphs{glyphsVersion}"
+
+    # First, try to establish a connection to a running app matching the
+    # registered name. We need only a low number of maximum tries because we
+    # would not have to wait for the app to launch.
+    proxy = applicationProxy(registeredName, 3)
+    if proxy is not None:
+        return proxy
+
+    # There is no running app, or another error occurred. Try to launch the app.
     # `-g` opens the application in the background.
     # `-j` opens the application hidden (its windows are not visible).
-    os.system(f"open -a 'Glyphs {glyphsVersion}' -g -j")
+    print_if_not_json(f"Opening application for {registeredName}")
+    os.system(f"open -b {registeredName} -g -j")
 
-    port = f"com.GeorgSeifert.Glyphs{glyphsVersion}"
+    # Try to establish a connection to the running app.
+    # Return the value even if it is `None`.
+    return applicationProxy(registeredName, MAX_CONNECTION_TRIES)
+
+
+# This function has been adapted from `Glyphs remote scripts/Glyphs.py`
+# in the `https://github.com/schriftgestalt/GlyphsSDK` repository.
+#
+# The registered name should have the following format:
+#
+#     com.GeorgSeifert.Glyphs(V)[BBBB]
+#
+# `V` is the major version (currently 3 or 4).
+# `BBBB` is an optional build number (e. g. 3343 for Glyphs 3.3.1).
+#
+# Returns `None` if the connection could not be established.
+def applicationProxy(registeredName, max_tries):
     conn = None
     tries = 1
 
-    print_if_not_json(f"Looking for a JSTalk connection to Glyphs {glyphsVersion}")
-    while ((conn is None) and (tries < MAX_CONNECTION_TRIES)):
-        conn = NSConnection.connectionWithRegisteredName_host_(port, None)
+    print_if_not_json(f"Looking for a JSTalk connection to {registeredName}")
+    while ((conn is None) and (tries < max_tries)):
+        conn = NSConnection.connectionWithRegisteredName_host_(registeredName, None)
         tries = tries + 1
 
         if (not conn):
-            print_if_not_json(f"Could not find connection, trying again ({tries} of {MAX_CONNECTION_TRIES})")
+            print_if_not_json(f"Could not find connection, trying again ({tries} of {max_tries})")
             time.sleep(1)
 
     if (not conn):
-        print_if_not_json(f"Failed to find a JSTalk connection to Glyphs {glyphsVersion}")
+        print_if_not_json(f"Failed to find a JSTalk connection to {registeredName}")
         return None
 
     return conn.rootProxy()
