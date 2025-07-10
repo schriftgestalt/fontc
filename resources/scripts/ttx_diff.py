@@ -58,6 +58,7 @@ import subprocess
 import sys
 import time
 import yaml
+import threading
 
 from absl import app
 from absl import flags
@@ -1410,6 +1411,17 @@ def get_crate_path(cli_arg: Optional[str], root_dir: Path, crate_name: str) -> P
     build_crate(manifest_path)
     return bin_path
 
+class ThreadWithException(threading.Thread):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.exception = None
+
+    def run(self):
+        try:
+            if self._target:
+                self._target(*self._args, **self._kwargs)
+        except Exception as e:
+            self.exception = e
 
 def main(argv):
     if len(argv) != 2:
@@ -1485,11 +1497,11 @@ def main(argv):
 
     try:
         if compareTool1 == _COMPARE_DEFAULT:
-            build_fontc(source, fontc_bin_path, build_dir)
+            thread1 = ThreadWithException(target=build_fontc, args=(source, fontc_bin_path, build_dir))
         elif compareTool1 == _COMPARE_GFTOOLS:
-            run_gftools(source, FLAGS.config, build_dir, fontc_bin=fontc_bin_path)
+            thread1 = ThreadWithException(target=run_gftools, args=(source, FLAGS.config, build_dir), kwargs={"fontc_bin": fontc_bin_path})
         else: # _COMPARE_GLYPHS_APP
-            exportFirstInstance(glyphs_4_proxy, source, build_dir, new_font_file_name)
+            thread1 = ThreadWithException(target=exportFirstInstance, args=(glyphs_4_proxy, source, build_dir, new_font_file_name))
     except BuildFail as e:
         failures[new_tool_name] = {
             "command": " ".join(e.command),
@@ -1498,16 +1510,31 @@ def main(argv):
 
     try:
         if compareTool2 == _COMPARE_DEFAULT:
-            build_fontmake(source, build_dir)
+            thread2 = ThreadWithException(target=build_fontmake, args=(source, build_dir))
         elif compareTool2 == _COMPARE_GFTOOLS:
-            run_gftools(source, FLAGS.config, build_dir)
+            thread2 = ThreadWithException(target=run_gftools, args=(source, FLAGS.config, build_dir))
         else: # _COMPARE_GLYPHS_APP
-            exportFirstInstance(glyphs_3_proxy, source, build_dir, old_font_file_name)
+            thread2 = ThreadWithException(target=exportFirstInstance, args=(glyphs_3_proxy, source, build_dir, old_font_file_name))
     except BuildFail as e:
         failures[old_tool_name] = {
             "command": " ".join(e.command),
             "stderr": e.msg[-MAX_ERR_LEN:],
         }
+
+    # Start and join
+    thread1.start()
+    thread2.start()
+
+    thread1.join()
+    thread2.join()
+
+    for i, t in enumerate([thread1, thread2], 1):
+        if t.exception:
+            tool_name = new_tool_name if i == 0 else old_tool_name
+            failures[tool_name] = {
+                "command": str(t.exception),
+                "stderr": str(t.exception),
+            }
 
     report_errors_and_exit_if_there_were_any(failures)
 
