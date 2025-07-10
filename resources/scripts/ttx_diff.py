@@ -140,6 +140,18 @@ flags.DEFINE_enum(
     "Compare results using either a default build, a build managed by `gftools`, or two versions of the Glyphs app. Note that as of 2023-05-21 `default` still sets flags for `fontmake` to match `fontc` behavior.",
 )
 flags.DEFINE_enum(
+    "compareTool1",
+    None,
+    [_COMPARE_DEFAULT, _COMPARE_GFTOOLS, _COMPARE_GLYPHS_APP],
+    "Compare results using either a fontmake, `gftools`, or Glyphs 3 app to generate the 'left' font.",
+)
+flags.DEFINE_enum(
+    "compareTool2",
+    None,
+    [_COMPARE_DEFAULT, _COMPARE_GFTOOLS, _COMPARE_GLYPHS_APP],
+    "Compare results using either a fontc, `gftools`, or Glyphs 4 app to generate the 'left' font.",
+)
+flags.DEFINE_enum(
     "rebuild",
     "both",
     ["both", NEW_TOOL_NAME, OLD_TOOL_NAME, "none"],
@@ -1411,25 +1423,29 @@ def main(argv):
     if root.name != FONTC_NAME:
         sys.exit("Expected to be at the root of fontc")
 
-    fontc_bin_path = get_crate_path(FLAGS.fontc_path, root, FONTC_NAME)
+    compare = FLAGS.compare
+    compareTool1 = FLAGS.compareTool2 or compare
+    compareTool2 = FLAGS.compareTool1 or compare
     otl_bin_path = get_crate_path(FLAGS.normalizer_path, root, "otl-normalizer")
 
-    assert fontc_bin_path.is_file(), f"fontc path '{fontc_bin_path}' does not exist"
-    assert otl_bin_path.is_file(), f"normalizer path '{otl_bin_path}' does not exist"
+    if compareTool1 != _COMPARE_GLYPHS_APP or compareTool2 != _COMPARE_GLYPHS_APP:
+        fontc_bin_path = get_crate_path(FLAGS.fontc_path, root, FONTC_NAME)
 
-    if shutil.which(FONTMAKE_NAME) is None:
-        sys.exit("No fontmake")
+        assert fontc_bin_path.is_file(), f"fontc path '{fontc_bin_path}' does not exist"
+        assert otl_bin_path.is_file(), f"normalizer path '{otl_bin_path}' does not exist"
+
+        if shutil.which(FONTMAKE_NAME) is None:
+            sys.exit("No fontmake")
     if shutil.which(TTX_NAME) is None:
         sys.exit("No ttx")
 
-    compare = FLAGS.compare
-    
     glyphs_3_proxy = None
     glyphs_4_proxy = None
-    if compare == _COMPARE_GLYPHS_APP:
+    if compareTool2 == _COMPARE_GLYPHS_APP:
         glyphs_3_proxy = application(GlyphsVersion.v3)
         if glyphs_3_proxy == None:
             sys.exit("No JSTalk connection to Glyphs 3")
+    if compareTool1 == _COMPARE_GLYPHS_APP:
         glyphs_4_proxy = application(GlyphsVersion.v4)
         if glyphs_4_proxy == None:
             sys.exit("No JSTalk connection to Glyphs 4")
@@ -1468,9 +1484,9 @@ def main(argv):
     failures = dict()
 
     try:
-        if compare == _COMPARE_DEFAULT:
+        if compareTool1 == _COMPARE_DEFAULT:
             build_fontc(source, fontc_bin_path, build_dir)
-        elif compare == _COMPARE_GFTOOLS:
+        elif compareTool1 == _COMPARE_GFTOOLS:
             run_gftools(source, FLAGS.config, build_dir, fontc_bin=fontc_bin_path)
         else: # _COMPARE_GLYPHS_APP
             exportFirstInstance(glyphs_4_proxy, source, build_dir, new_font_file_name)
@@ -1481,9 +1497,9 @@ def main(argv):
         }
 
     try:
-        if compare == _COMPARE_DEFAULT:
+        if compareTool2 == _COMPARE_DEFAULT:
             build_fontmake(source, build_dir)
-        elif compare == _COMPARE_GFTOOLS:
+        elif compareTool2 == _COMPARE_GFTOOLS:
             run_gftools(source, FLAGS.config, build_dir)
         else: # _COMPARE_GLYPHS_APP
             exportFirstInstance(glyphs_3_proxy, source, build_dir, old_font_file_name)
