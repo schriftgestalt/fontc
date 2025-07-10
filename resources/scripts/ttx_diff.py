@@ -1198,20 +1198,37 @@ def generate_output(
     new_tool_name: str,
     new_font_file: Path
 ):
-    new_ttx = run_ttx(new_font_file)
-    old_ttx = run_ttx(old_font_file)
+    try:
+        new_ttx = run_ttx(new_font_file)
+    except:
+        new_ttx = None
+
+    try:
+        old_ttx = run_ttx(old_font_file)
+    except:
+        old_ttx = None
+
     new_gpos = run_normalizer(otl_norm_bin, new_font_file, "gpos")
     old_gpos = run_normalizer(otl_norm_bin, old_font_file, "gpos")
     new_gdef = run_normalizer(otl_norm_bin, new_font_file, "gdef")
     old_gdef = run_normalizer(otl_norm_bin, old_font_file, "gdef")
 
-    new_tree = etree.parse(new_ttx)
-    old_tree = etree.parse(old_ttx)
-    fill_in_gvar_deltas(new_tree, new_font_file, old_tree, old_font_file)
-    reduce_diff_noise(new_tree, old_tree)
+    if new_ttx:
+        new_tree = etree.parse(new_ttx)
+    if old_ttx:
+        old_tree = etree.parse(old_ttx)
+    if new_ttx and old_ttx:
+        fill_in_gvar_deltas(new_tree, new_font_file, old_tree, old_font_file)
+        reduce_diff_noise(new_tree, old_tree)
 
-    new_map = extract_comparables(new_tree, build_dir, new_tool_name)
-    old_map = extract_comparables(old_tree, build_dir, old_tool_name)
+    if new_ttx:
+        new_map = extract_comparables(new_tree, build_dir, new_tool_name)
+    else:
+        new_map = {}
+    if old_ttx:
+        old_map = extract_comparables(old_tree, build_dir, old_tool_name)
+    else:
+        old_map = {}
     size_diffs = check_sizes(old_font_file, new_font_file)
     new_map[MARK_KERN_NAME] = new_gpos
     old_map[MARK_KERN_NAME] = old_gpos
