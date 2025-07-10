@@ -1074,18 +1074,18 @@ def densify_one_glyph(coords, ends, variations: etree.ElementTree):
     return did_work
 
 
-def reduce_diff_noise(fontc: etree.ElementTree, fontmake: etree.ElementTree):
-    fontmake_glyph_map = {
+def reduce_diff_noise(new_tool_tree: etree.ElementTree, old_tool_tree: etree.ElementTree):
+    old_tool_tree_glyph_map = {
         el.attrib["name"]: int(el.attrib["id"])
-        for el in fontmake.xpath("//GlyphOrder/GlyphID")
+        for el in old_tool_tree.xpath("//GlyphOrder/GlyphID")
     }
 
-    sort_indices(fontmake, "GPOS", "//Feature", "LookupListIndex")
-    sort_indices(fontmake, "GSUB", "//LangSys", "FeatureIndex")
-    sort_indices(fontmake, "GSUB", "//DefaultLangSys", "FeatureIndex")
-    reorder_contextual_class_based_rules(fontmake, "GSUB", fontmake_glyph_map)
-    reorder_contextual_class_based_rules(fontmake, "GPOS", fontmake_glyph_map)
-    for ttx in (fontc, fontmake):
+    sort_indices(old_tool_tree, "GPOS", "//Feature", "LookupListIndex")
+    sort_indices(old_tool_tree, "GSUB", "//LangSys", "FeatureIndex")
+    sort_indices(old_tool_tree, "GSUB", "//DefaultLangSys", "FeatureIndex")
+    reorder_contextual_class_based_rules(old_tool_tree, "GSUB", old_tool_tree_glyph_map)
+    reorder_contextual_class_based_rules(old_tool_tree, "GPOS", old_tool_tree_glyph_map)
+    for ttx in (new_tool_tree, old_tool_tree):
         # different name ids with the same value is fine
         name_id_to_name(ttx, "//NamedInstance", "subfamilyNameID")
         name_id_to_name(ttx, "//NamedInstance", "postscriptNameID")
@@ -1117,10 +1117,10 @@ def reduce_diff_noise(fontc: etree.ElementTree, fontmake: etree.ElementTree):
         normalize_name_ids(ttx)
 
     allow_some_off_by_ones(
-        fontc, fontmake, "glyf/TTGlyph", "name", "/contour/pt"
+        new_tool_tree, old_tool_tree, "glyf/TTGlyph", "name", "/contour/pt"
     )
     allow_some_off_by_ones(
-        fontc, fontmake, "gvar/glyphVariations", "glyph", "/tuple/delta"
+        new_tool_tree, old_tool_tree, "gvar/glyphVariations", "glyph", "/tuple/delta"
     )
 
 
