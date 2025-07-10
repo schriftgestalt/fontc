@@ -662,17 +662,28 @@ def select_one(container, xpath):
 
 
 def drop_weird_names(ttx):
-    drops = list(
-        ttx.xpath(
-            "//name/namerecord[@platformID='1' and @platEncID='0' and @langID='0x0']"
-        )
+    drops = []
+    d = ttx.xpath(
+        "//name/namerecord[@platformID='1' and @platEncID='0' and @langID='0x0']"
     )
+    if d:
+        drops.extend(d)
+    
+    d = ttx.xpath(
+        "//name/namerecord[@nameID='5']"
+    )
+    if d:
+        drops.extend(d)
     for drop in drops:
         drop.getparent().remove(drop)
 
 
 def erase_checksum(ttx):
     el = select_one(ttx, "//head/checkSumAdjustment")
+    del el.attrib["value"]
+    el = select_one(ttx, "//head/created")
+    del el.attrib["value"]
+    el = select_one(ttx, "//head/modified")
     del el.attrib["value"]
 
 
