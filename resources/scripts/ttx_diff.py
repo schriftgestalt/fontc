@@ -115,75 +115,75 @@ def eprint(*objects):
 
 flags.DEFINE_string(
     "config",
-    default=None,
-    help="`config.yaml` to be passed to `gftools` in `gftools` mode",
+    default = None,
+    help = "`config.yaml` to be passed to `gftools` in `gftools` mode",
 )
 flags.DEFINE_string(
     "fontc_path",
-    default=None,
-    help="Optional path to precompiled `fontc` binary",
+    default = None,
+    help = "Optional path to precompiled `fontc` binary",
 )
 flags.DEFINE_string(
     "normalizer_path",
-    default=None,
-    help="Optional path to precompiled `otl-normalizer` binary",
+    default = None,
+    help = "Optional path to precompiled `otl-normalizer` binary",
 )
 flags.DEFINE_string(
     "cache_path",
-    default=None,
-    help="Optional path to custom cache location for font repositories. Defaults to `~/.fontc_crater_cache`",
+    default = None,
+    help = "Optional path to custom cache location for font repositories. Defaults to `~/.fontc_crater_cache`",
 )
 flags.DEFINE_string(
     "new_glyphs_version",
-    default="4",
-    help="Optional version string for the new Glyphs version. Must contain the major version. Can be specified further with the build version, separated by a period (e. g. '4.3837').",
+    default = "4",
+    help = "Optional version string for the new Glyphs version. Must contain the major version. Can be specified further with the build version, separated by a period (e. g. '4.3837').",
 )
 flags.DEFINE_string(
     "new_glyphs_path",
-    default=None,
-    help="Optional path to the application bundle of the new Glyphs version. You should specify this if the app is not yet running. Otherwise, the bundle identifier will be used to launch the app.",
+    default = None,
+    help = "Optional path to the application bundle of the new Glyphs version. You should specify this if the app is not yet running. Otherwise, the bundle identifier will be used to launch the app.",
 )
 flags.DEFINE_string(
     "old_glyphs_version",
-    default="3",
-    help="Optional version string for the old Glyphs version. Must contain the major version. Can be specified further with the build version, separated by a period (e. g. '3.3343').",
+    default = "3",
+    help = "Optional version string for the old Glyphs version. Must contain the major version. Can be specified further with the build version, separated by a period (e. g. '3.3343').",
 )
 flags.DEFINE_string(
     "old_glyphs_path",
-    default=None,
-    help="Optional path to the application bundle of the old Glyphs version. You should specify this if the app is not yet running. Otherwise, the bundle identifier will be used to launch the app.",
+    default = None,
+    help = "Optional path to the application bundle of the old Glyphs version. You should specify this if the app is not yet running. Otherwise, the bundle identifier will be used to launch the app.",
 )
 flags.DEFINE_enum(
     "compare",
-    "default",
-    [_COMPARE_DEFAULT, _COMPARE_GFTOOLS, _COMPARE_GLYPHS_APP],
-    "Compare results using either a default build, a build managed by `gftools`, or two versions of the Glyphs app. Note that as of 2023-05-21 `default` still sets flags for `fontmake` to match `fontc` behavior.",
+    default = "default",
+    enum_values = [_COMPARE_DEFAULT, _COMPARE_GFTOOLS, _COMPARE_GLYPHS_APP],
+    help = "Compare results using either a default build, a build managed by `gftools`, or two versions of the Glyphs app. Note that as of 2023-05-21 `default` still sets flags for `fontmake` to match `fontc` behavior.",
 )
 flags.DEFINE_enum(
     "rebuild",
-    "both",
-    ["both", NEW_TOOL_NAME, OLD_TOOL_NAME, "none"],
-    "Which compilers to rebuild with if the output appears to already exist. `none` is handy when playing with `ttx_diff.py` itself.",
+    default = "both",
+    enum_values = ["both", NEW_TOOL_NAME, OLD_TOOL_NAME, "none"],
+    help = "Which compilers to rebuild with if the output appears to already exist. `none` is handy when playing with `ttx_diff.py` itself.",
 )
 flags.DEFINE_float(
     "off_by_one_budget",
-    0.1,
-    "The percentage of point (glyf) or delta (gvar) values allowed to differ by one without counting as a diff.",
+    default = 0.1,
+    help = "The percentage of point (glyf) or delta (gvar) values allowed to differ by one without counting as a diff.",
 )
 flags.DEFINE_bool(
     "json",
-    False,
-    "Print results in machine-readable JSON format."
+    default = False,
+    help = "Print results in machine-readable JSON format."
 )
 flags.DEFINE_string(
     "outdir",
-    None,
-    "Directory to store generated files."
+    default = None,
+    help = "Directory to store generated files."
 )
 flags.DEFINE_bool(
     "production_names",
-    True,
-    "Rename glyphs to AGL-compliant names (uniXXXX, etc.) suitable for production. Disable to see the original glyph names.",
+    default = True,
+    help = "Rename glyphs to AGL-compliant names (uniXXXX, etc.) suitable for production. Disable to see the original glyph names.",
 )
 
 # fontmake - and so gftools' - static builds perform overlaps removal, but fontc
@@ -193,8 +193,8 @@ flags.DEFINE_bool(
 # https://github.com/googlefonts/fontc/issues/975
 flags.DEFINE_bool(
     "keep_overlaps",
-    True,
-    "Keep overlaps when building static fonts. Disable to compare with simplified outlines.",
+    default = True,
+    help = "Keep overlaps when building static fonts. Disable to compare with simplified outlines.",
 )
 
 
