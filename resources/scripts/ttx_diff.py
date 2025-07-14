@@ -497,6 +497,9 @@ INITIAL_CONNECTION_TRIES = 3
 MAX_CONNECTION_TRIES = 10
 
 
+BASE_BUNDLE_IDENTIFIER = "com.GeorgSeifert.Glyphs"
+
+
 # `fontc_crater/ttx_diff_runner.rs` expects nothing but JSON on `stdout`,
 # so we log status messages only if we are not in JSON output mode.
 def print_if_not_json(message: str):
@@ -507,7 +510,7 @@ def print_if_not_json(message: str):
 # This function has been adapted from `Glyphs remote scripts/Glyphs.py`
 # in the `https://github.com/schriftgestalt/GlyphsSDK` repository.
 def application(version_string: str, bundle_path: str = None) -> NSDistantObject:
-    registered_name = f"com.GeorgSeifert.Glyphs{version_string}"
+    registered_name = BASE_BUNDLE_IDENTIFIER + version_string
 
     # First, try to establish a connection to a running app matching the
     # registered name. We need only a low number of maximum tries because we
@@ -524,7 +527,8 @@ def application(version_string: str, bundle_path: str = None) -> NSDistantObject
     else:
         # We need to remove the build number from the version string, if 
         # present, as bundle identifiers do not include them.
-        bundle_identifier = registered_name.rsplit('.', 1)[0]
+        major_version_string = version_string.rsplit('.', 1)[0]
+        bundle_identifier = BASE_BUNDLE_IDENTIFIER + major_version_string
         print_if_not_json(f"Opening application for {bundle_identifier}")
         launch_option = f"-b {bundle_identifier}"
 
