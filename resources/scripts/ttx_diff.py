@@ -130,8 +130,8 @@ flags.DEFINE_string(
 )
 flags.DEFINE_string(
     "cache_path",
-    default = None,
-    help = "Optional path to custom cache location for font repositories. Defaults to `~/.fontc_crater_cache`",
+    default = "~/.fontc_crater_cache",
+    help = "Optional path to custom cache location for font repositories.",
 )
 flags.DEFINE_string(
     "new_glyphs_version",
@@ -1462,7 +1462,7 @@ def main(argv):
     if len(argv) != 2:
         sys.exit("Only one argument, a source file, is expected. Pass the `--help` flag to display usage information and available options.")
 
-    cache_dir = Path.home() / ".fontc_crater_cache" if FLAGS.cache_path is None else Path(FLAGS.cache_path).resolve()
+    cache_dir = Path(FLAGS.cache_path).expanduser().resolve()
     source = resolve_source(argv[1], cache_dir).resolve()
 
     # Configure dependencies.
@@ -1502,7 +1502,7 @@ def main(argv):
     # Configure output files.
     out_dir = root / "build"
     if FLAGS.outdir is not None:
-        out_dir = Path(FLAGS.outdir).resolve()
+        out_dir = Path(FLAGS.outdir).expanduser().resolve()
         assert out_dir.exists(), f"output directory {out_dir} does not exist"
 
     build_dir = out_dir / compare
