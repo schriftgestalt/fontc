@@ -834,6 +834,8 @@ def erase_type_from_stranded_points(ttx):
             points[0].attrib["on"] = "irrelevent"
 
 
+# This method is one of the few where it matters which tool is `fontc` and
+# which is `fontmake`.
 def allow_some_off_by_ones(fontc, fontmake, container, name_attr, coord_holder):
     fontmake_num_coords = len(fontmake.xpath(f"//{container}/{coord_holder}"))
     off_by_one_budget = int(FLAGS.off_by_one_budget / 100.0 * fontmake_num_coords)
@@ -1074,19 +1076,19 @@ def reorder_contextual_class_based_rules(
 
 
 def fill_in_gvar_deltas(
-    fontc: etree.ElementTree,
-    fontc_ttf: Path,
-    fontmake: etree.ElementTree,
-    fontmake_ttf: Path,
+    tree_1: etree.ElementTree,
+    ttf_1: Path,
+    tree_2: etree.ElementTree,
+    ttf_2: Path,
 ):
-    fontc_font = TTFont(fontc_ttf)
-    fontmake_font = TTFont(fontmake_ttf)
-    dense_fontc_count = densify_gvar(fontc_font, fontc)
-    dense_fontmake_count = densify_gvar(fontmake_font, fontmake)
+    font_1 = TTFont(ttf_1)
+    font_2 = TTFont(ttf_2)
+    dense_count_1 = densify_gvar(font_1, tree_1)
+    dense_count_2 = densify_gvar(font_2, tree_2)
 
-    if dense_fontc_count + dense_fontmake_count > 0:
+    if dense_count_1 + dense_count_2 > 0:
         eprint(
-            f"densified {dense_fontc_count} glyphVariations in fontc, {dense_fontmake_count} in fontmake"
+            f"densified {dense_count_1} glyphVariations in tool 1, {dense_count_2} in tool 2"
         )
 
 
@@ -1137,6 +1139,8 @@ def densify_one_glyph(coords, ends, variations: etree.ElementTree):
     return did_work
 
 
+# This method is one of the few where it matters which tool is `fontc` and
+# which is `fontmake`.
 def reduce_diff_noise(fontc: etree.ElementTree, fontmake: etree.ElementTree):
     fontmake_glyph_map = {
         el.attrib["name"]: int(el.attrib["id"])
@@ -1205,26 +1209,30 @@ def get_table_sizes(fontfile: Path) -> dict[str, int]:
     return result
 
 
-# return a dict of table tag  -> size difference
+# return a dict of table tag -> size difference
 # only when size difference exceeds some threshold
-def check_sizes(old_font_file: Path, new_font_file: Path):
+def check_sizes(font_file_1: Path, font_file_2: Path):
     THRESHOLD = 1 / 10
-    old_sizes = get_table_sizes(old_font_file)
-    new_sizes = get_table_sizes(new_font_file)
+    sizes_1 = get_table_sizes(font_file_1)
+    sizes_2 = get_table_sizes(font_file_2)
 
     output = dict()
-    shared_keys = set(old_sizes.keys() & new_sizes.keys())
+    shared_keys = set(sizes_1.keys() & sizes_2.keys())
 
     for key in shared_keys:
-        old_len = old_sizes[key]
-        new_len = new_sizes[key]
-        if new_len < old_len:
-            continue
-        len_ratio = min(new_len, old_len) / max(new_len, old_len)
+        len_1 = sizes_1[key]
+        len_2 = sizes_2[key]
+        len_ratio = min(len_1, len_2) / max(len_1, len_2)
         if (1 - len_ratio) > THRESHOLD:
-            rel_len = new_len - old_len
-            eprint(f"{key} {old_len} {new_len} {len_ratio:.3} {rel_len}")
-            output[key] = rel_len
+            if len_2 > len_1:
+                rel_len = len_2 - len_1
+                eprint(f"{key} {len_1} {len_2} {len_ratio:.3} {rel_len}")
+                output[key] = rel_len
+            elif len_1 > len_2:
+                rel_len = len_1 - len_2
+                eprint(f"{key} {len_2} {len_1} {len_ratio:.3} {rel_len}")
+                output[key] = rel_len
+
     return output
 
 
@@ -1268,32 +1276,32 @@ def generate_output(
 def print_output(
     build_dir: Path,
     output: dict[str, dict[str, Any]],
-    old_tool_name: str,
-    new_tool_name: str
+    tool_name_1: str,
+    tool_name_2: str
 ):
-    new_map = output[new_tool_name]
-    old_map = output[old_tool_name]
+    map_1 = output[tool_name_1]
+    map_2 = output[tool_name_2]
     print("COMPARISON")
-    t1 = set(new_map.keys())
-    t2 = set(old_map.keys())
+    t1 = set(map_1.keys())
+    t2 = set(map_2.keys())
     if t1 != t2:
         if t1 - t2:
             tags = ", ".join(f"'{t}'" for t in sorted(t1 - t2))
-            print(f"  Only {new_tool_name} produced {tags}")
+            print(f"  Only {tool_name_1} produced {tags}")
 
         if t2 - t1:
             tags = ", ".join(f"'{t}'" for t in sorted(t2 - t1))
-            print(f"  Only {old_tool_name} produced {tags}")
+            print(f"  Only {tool_name_2} produced {tags}")
 
     for tag in sorted(t1 & t2):
-        t1s = new_map[tag]
-        t2s = old_map[tag]
+        t1s = map_1[tag]
+        t2s = map_2[tag]
         if t1s == t2s:
             print(f"  Identical '{tag}'")
         else:
             difference = diff_ratio(t1s, t2s)
-            p1 = build_dir / path_for_output_item(tag, new_tool_name)
-            p2 = build_dir / path_for_output_item(tag, old_tool_name)
+            p1 = build_dir / path_for_output_item(tag, tool_name_1)
+            p2 = build_dir / path_for_output_item(tag, tool_name_2)
             print(f"  DIFF '{tag}', {p1} {p2} ({difference:.3%})")
     if output.get("sizes"):
         print("SIZE DIFFERENCES")
@@ -1303,26 +1311,26 @@ def print_output(
 
 def jsonify_output(
     output: dict[str, dict[str, Any]],
-    old_tool_name: str,
-    new_tool_name: str
+    tool_name_1: str,
+    tool_name_2: str
 ):
-    new_map = output[new_tool_name]
-    old_map = output[old_tool_name]
+    map_1 = output[tool_name_1]
+    map_2 = output[tool_name_2]
     sizes = output.get("sizes", {})
-    all_tags = set(new_map.keys()) | set(old_map.keys())
+    all_tags = set(map_1.keys()) | set(map_2.keys())
     out = dict()
     same_lines = 0
     different_lines = 0
     for tag in all_tags:
-        if tag not in new_map:
-            different_lines += len(old_map[tag])
-            out[tag] = old_tool_name
-        elif tag not in old_map:
-            different_lines += len(new_map[tag])
-            out[tag] = new_tool_name
+        if tag not in map_1:
+            different_lines += len(map_2[tag])
+            out[tag] = tool_name_2
+        elif tag not in map_2:
+            different_lines += len(map_1[tag])
+            out[tag] = tool_name_1
         else:
-            s1 = new_map[tag]
-            s2 = old_map[tag]
+            s1 = map_1[tag]
+            s2 = map_2[tag]
             if s1 != s2:
                 ratio = diff_ratio(s1, s2)
                 n_lines = max(len(s1), len(s2))
