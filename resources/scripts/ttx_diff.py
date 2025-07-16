@@ -24,10 +24,10 @@ Usage:
 
     # Rebuild with Glyphs 3 and Glyphs 4 and compare. The paths to the app
     # bundles have to be specified.
-    python resources/scripts/ttx_diff.py --compare glyphs_app --glyphs_path_1 '/Applications/Glyphs 3.3.1 (3343).app' --glyphs_path_2 '/Applications/Glyphs 4.0a (3837).app' ../OswaldFont/sources/Oswald.glyphs
+    python resources/scripts/ttx_diff.py --compare glyphsapp --tool_path_1 '/Applications/Glyphs 3.3.1 (3343).app' --tool_path_2 '/Applications/Glyphs 4.0a (3837).app' ../OswaldFont/sources/Oswald.glyphs
     
-    # Rebuild with `fontc` and Glyphs 4 and compare.
-    python resources/scripts/ttx_diff.py --tool_type_1 fontc --tool_type_2 glyphs_app --glyphs_path_2 '/Applications/Glyphs 4.0a (3837).app' ../OswaldFont/sources/Oswald.glyphs
+    # Rebuild with precompiled `fontc` binary and Glyphs 4 and compare.
+    python resources/scripts/ttx_diff.py --tool_type_1 fontc --tool_path_1 ~/fontc/target/release/fontc --tool_type_2 glyphsapp --tool_path_2 '/Applications/Glyphs 4.0a (3837).app' ../OswaldFont/sources/Oswald.glyphs
 
 JSON:
     If the `--json` flag is passed, this tool will output JSON.
@@ -37,7 +37,7 @@ JSON:
     (or another identifier) and the value is either a float representing the
     'difference ratio' (where 1.0 means identical and 0.0 means maximally
     dissimilar) or, if only one compiler produced that table, the name of that
-    compiler as a string ("fontc", "glyphs_app_4" etc.).
+    compiler as a string ("fontc", "glyphsapp_4" etc.).
     For example, when run in `default` or `gftools` modes, the output 
     `{"success": { "GPOS": 0.99, "vmxt": "fontmake" }}` means that the "GPOS"
     table was 99%% similar, and only `fontmake` produced the "vmtx" table (and 
@@ -88,7 +88,7 @@ class Compare(IntEnum):
     UNSET = 0
     DEFAULT = 1
     GFTOOLS = 2
-    GLYPHS_APP = 3
+    GLYPHSAPP = 3
 
 # Since `absl` flags do not support overriding the generated flag names, the
 # string values should match the lowercase versions of the constants (i. e.
@@ -104,7 +104,7 @@ class ToolType(StrEnum):
     FONTC_GFTOOLS = "fontc_gftools"
     FONTMAKE_GFTOOLS = "fontmake_gftools"
 
-    GLYPHS_APP = "glyphs_app"
+    GLYPHSAPP = "glyphsapp"
 
 FONTC_NAME = "fontc"
 FONTMAKE_NAME = "fontmake"
@@ -114,9 +114,6 @@ TTX_NAME = "ttx"
 
 GLYPHS_VERSION_STRING_3 = "3"
 GLYPHS_VERSION_STRING_4 = "4"
-
-# environment variable used by GFTOOLS
-GFTOOLS_FONTC_PATH = "GFTOOLS_FONTC_PATH"
 
 FLAGS = flags.FLAGS
 
@@ -144,13 +141,18 @@ flags.DEFINE_enum_class(
     "compare",
     default = Compare.UNSET,
     enum_class = Compare,
-    help = "Compare results using either a default build, a build managed by `gftools`, or two versions of the Glyphs app. These are presets for specific `tool_type_1` and `tool_type_2` combinations. `default` sets tool 1 to `fontmake` and tool 2 to `fontc`. Note that as of 2023-05-21 `default` still sets flags for `fontmake` to match `fontc` behavior.",
+    help = "Compare results using either a default build, a build managed by `gftools`, or two versions of the Glyphs app.\nThese are presets for specific `tool_type_1` and `tool_type_2` combinations. `default` sets tool 1 to `fontmake` and tool 2 to `fontc`; `gftools` sets tool 1 to `fontmake_gftools` and tool 2 to `fontc_gftools`.\nNote that as of 2023-05-21 we still sets flags for `fontmake` to match `fontc` behavior.",
 )
 flags.DEFINE_enum_class(
     "tool_type_1",
     default = ToolType.UNSET,
     enum_class = ToolType,
     help = "Choose the type of the first tool which should be used to build fonts to compare. Note that as of 2023-05-21, we still set flags for `fontmake` to match `fontc` behavior.",
+)
+flags.DEFINE_string(
+    "tool_path_1",
+    default = None,
+    help = "For `fontc`: Optional path to precompiled `fontc` binary to be used as tool 1.\nFor `glyphsapp`: Required path to the application bundle of the specific Glyphs app version to be used as tool 1.\nPlease note that if a different instance of the Glyphs app with the same major version is already running, that version may be used instead.",
 )
 flags.DEFINE_enum_class(
     "tool_type_2",
@@ -159,14 +161,14 @@ flags.DEFINE_enum_class(
     help = "Choose the type of the second tool which should be used to build fonts to compare. Note that as of 2023-05-21, we still set flags for `fontmake` to match `fontc` behavior.",
 )
 flags.DEFINE_string(
+    "tool_path_2",
+    default = None,
+    help = "For `fontc`: Optional path to precompiled `fontc` binary to be used as tool 2.\nFor `glyphsapp`: Required path to the application bundle of the specific Glyphs app version to be used as tool 2.\nPlease note that if a different instance of the Glyphs app with the same major version is already running, that version may be used instead.",
+)
+flags.DEFINE_string(
     "config",
     default = None,
     help = "`config.yaml` to be passed to `gftools` when using a tool managed by `gftools`",
-)
-flags.DEFINE_string(
-    "fontc_path",
-    default = None,
-    help = "Optional path to precompiled `fontc` binary",
 )
 flags.DEFINE_string(
     "normalizer_path",
@@ -177,16 +179,6 @@ flags.DEFINE_string(
     "cache_path",
     default = "~/.fontc_crater_cache",
     help = "Optional path to custom cache location for font repositories.",
-)
-flags.DEFINE_string(
-    "glyphs_path_1",
-    default = None,
-    help = "Required path to the application bundle of the specific Glyphs app version to be used as tool 1. Please note that if a different instance of the Glyphs app with the same major version is already running, that version may be used instead.",
-)
-flags.DEFINE_string(
-    "glyphs_path_2",
-    default = None,
-    help = "Required path to the application bundle of the specific Glyphs app version to be used as tool 2. Please note that if a different instance of the Glyphs app with the same major version is already running, that version may be used instead.",
 )
 flags.DEFINE_enum(
     "rebuild",
@@ -1592,10 +1584,12 @@ class Tool(ABC):
 @dataclass
 class FontcTool(Tool):
     root: Path
+    fontc_path: str = None
+
     _fontc_bin: Path = field(init=False, repr=False)
 
     def __post_init__(self):
-        self._fontc_bin = get_crate_path(FLAGS.fontc_path, self.root, FONTC_NAME)
+        self._fontc_bin = get_crate_path(self.fontc_path, self.root, FONTC_NAME)
         assert self._fontc_bin.is_file(), f"fontc path '{fontc_bin}' does not exist"
 
     # Created once, read-only.
@@ -1661,19 +1655,19 @@ class GlyphsAppTool(Tool):
     bundle_path: str = None
 
     # Created once, internal.
-    _glyphs_proxy: NSDistantObject = field(init=False, repr=False)
+    _glyphsapp_proxy: NSDistantObject = field(init=False, repr=False)
     
     _version: str = None
     _build_number: str = None
 
     def __post_init__(self):
-        self._glyphs_proxy, self._version, self._build_number = application(self.bundle_path)
-        if self._glyphs_proxy is None:
+        self._glyphsapp_proxy, self._version, self._build_number = application(self.bundle_path)
+        if self._glyphsapp_proxy is None:
             sys.exit("No JSTalk connection to Glyphs app at {self.bundle_path}")
 
     @property
     def tool_type(self) -> ToolType:
-        return ToolType.GLYPHS_APP
+        return ToolType.GLYPHSAPP
 
     @property
     def tool_name(self) -> str:
@@ -1686,7 +1680,7 @@ class GlyphsAppTool(Tool):
 
     def build_action(self, build_dir: Path, font_file_name: str = None) -> Callable[[], None]:
         def action():
-            exportFirstInstance(self._glyphs_proxy, self.source, build_dir, font_file_name)
+            exportFirstInstance(self._glyphsapp_proxy, self.source, build_dir, font_file_name)
         return action
 
 
@@ -1718,28 +1712,28 @@ def main(argv):
         elif compare == Compare.GFTOOLS:
             tool_type_1 = ToolType.FONTMAKE_GFTOOLS
             tool_type_2 = ToolType.FONTC_GFTOOLS
-        elif compare == Compare.GLYPHS_APP:
-            tool_type_1 = ToolType.GLYPHS_APP
-            tool_type_2 = ToolType.GLYPHS_APP
+        elif compare == Compare.GLYPHSAPP:
+            tool_type_1 = ToolType.GLYPHSAPP
+            tool_type_2 = ToolType.GLYPHSAPP
         else:
             # `compare` is either not set or an unsupported value.
             sys.exit("Must specify two tools or a compare mode")
 
     # Ensure that required Glyphs app bundle paths are set.
-    if tool_type_1 == ToolType.GLYPHS_APP and FLAGS.glyphs_path_1 is None:
+    if tool_type_1 == ToolType.GLYPHSAPP and FLAGS.tool_path_1 is None:
         sys.exit("Must specify path to Glyphs app bundle used as tool 1")
-    if tool_type_2 == ToolType.GLYPHS_APP and FLAGS.glyphs_path_2 is None:
+    if tool_type_2 == ToolType.GLYPHSAPP and FLAGS.tool_path_2 is None:
         sys.exit("Must specify path to Glyphs app bundle used as tool 2")
 
     # Currently, having two tools of the same type is supported for Glyphs app
     # instances only. These must have at least different build numbers.
     if tool_type_1 == tool_type_2:
-        if tool_type_1 != ToolType.GLYPHS_APP:
+        if tool_type_1 != ToolType.GLYPHSAPP:
             sys.exit("Must specify two different tools")
 
         # Both tools are Glyphs apps.
-        version_1, build_number_1 = app_bundle_version(FLAGS.glyphs_path_1)
-        version_2, build_number_2 = app_bundle_version(FLAGS.glyphs_path_2)
+        version_1, build_number_1 = app_bundle_version(FLAGS.tool_path_1)
+        version_2, build_number_2 = app_bundle_version(FLAGS.tool_path_2)
         if version_1 == version_2 and build_number_1 == build_number_2:
             sys.exit("Must specify two different Glyphs app builds")
 
@@ -1760,27 +1754,27 @@ def main(argv):
     # Configure tools.
     tool_1 = None;
     if tool_type_1 == ToolType.FONTC:
-        tool_1 = StandaloneFontcTool(source, root)
+        tool_1 = StandaloneFontcTool(source, root, FLAGS.tool_path_1)
     elif tool_type_1 == ToolType.FONTMAKE:
         tool_1 = StandaloneFontmakeTool(source)
     elif tool_type_1 == ToolType.FONTC_GFTOOLS:
-        tool_1 = GfToolsFontcTool(source, root)
+        tool_1 = GfToolsFontcTool(source, root, FLAGS.tool_path_1)
     elif tool_type_1 == ToolType.FONTMAKE_GFTOOLS:
         tool_1 = GfToolsFontmakeTool(source)
-    elif tool_type_1 == ToolType.GLYPHS_APP:
-        tool_1 = GlyphsAppTool(source, FLAGS.glyphs_path_1)
+    elif tool_type_1 == ToolType.GLYPHSAPP:
+        tool_1 = GlyphsAppTool(source, FLAGS.tool_path_1)
 
     tool_2 = None;
     if tool_type_2 == ToolType.FONTC:
-        tool_2 = StandaloneFontcTool(source, root)
+        tool_2 = StandaloneFontcTool(source, root, FLAGS.tool_path_2)
     elif tool_type_2 == ToolType.FONTMAKE:
         tool_2 = StandaloneFontmakeTool(source)
     elif tool_type_2 == ToolType.FONTC_GFTOOLS:
-        tool_2 = GfToolsFontcTool(source, root)
+        tool_2 = GfToolsFontcTool(source, root, FLAGS.tool_path_2)
     elif tool_type_2 == ToolType.FONTMAKE_GFTOOLS:
         tool_2 = GfToolsFontmakeTool(source)
-    elif tool_type_2 == ToolType.GLYPHS_APP:
-        tool_2 = GlyphsAppTool(source, FLAGS.glyphs_path_2)
+    elif tool_type_2 == ToolType.GLYPHSAPP:
+        tool_2 = GlyphsAppTool(source, FLAGS.tool_path_2)
 
     if tool_1 is None or tool_2 is None:
         sys.exit("Failed to configure one or both tools")
