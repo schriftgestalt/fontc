@@ -19,15 +19,15 @@ Usage:
     python resources/scripts/ttx_diff.py --compare default --rebuild fontc ../OswaldFont/sources/Oswald.glyphs
 
     # Rebuild with `fontmake` and `fontc` (managed by `gftools`) and compare.
-    python resources/scripts/ttx_diff.py --compare gftools ../OswaldFont/sources/Oswald.glyphs
+    # This requires a config file.
+    python resources/scripts/ttx_diff.py --compare gftools --config ../OswaldFont/sources/config.yaml ../OswaldFont/sources/Oswald.glyphs
 
-    # Rebuild with Glyphs 3 and Glyphs 4 and compare. The apps do not have to
-    # be in a specific location. This works well if there are no multiple
-    # versions of each major version; otherwise, specify application paths.
-    python resources/scripts/ttx_diff.py --compare glyphsapp ../OswaldFont/sources/Oswald.glyphs
+    # Rebuild with Glyphs 3 and Glyphs 4 and compare. The paths to the app
+    # bundles have to be specified.
+    python resources/scripts/ttx_diff.py --compare glyphs_app --glyphs_path_1 '/Applications/Glyphs 3.3.1 (3343).app' --glyphs_path_2 '/Applications/Glyphs 4.0a (3837).app' ../OswaldFont/sources/Oswald.glyphs
     
     # Rebuild with `fontc` and Glyphs 4 and compare.
-    python resources/scripts/ttx_diff.py --tool_type_1 fontc --tool_type_2 glyphs_app ../OswaldFont/sources/Oswald.glyphs
+    python resources/scripts/ttx_diff.py --tool_type_1 fontc --tool_type_2 glyphs_app --glyphs_path_2 '/Applications/Glyphs 4.0a (3837).app' ../OswaldFont/sources/Oswald.glyphs
 
 JSON:
     If the `--json` flag is passed, this tool will output JSON.
@@ -57,6 +57,7 @@ Caching:
 
 import json
 import os
+import plistlib
 import shutil
 import subprocess
 import sys
@@ -178,24 +179,14 @@ flags.DEFINE_string(
     help = "Optional path to custom cache location for font repositories.",
 )
 flags.DEFINE_string(
-    "glyphs_version_1",
-    default = None,
-    help = "Optional version string for the Glyphs app instance used as tool 1. Must contain the major version. Can be specified further with the build number, separated by a period (e. g. '3.3343'). If setting the path, the version must also be set to match.",
-)
-flags.DEFINE_string(
     "glyphs_path_1",
     default = None,
-    help = "Optional path to the application bundle of the Glyphs app instance used as tool 1. You should specify this if the app is not yet running. Otherwise, the bundle identifier (without build number) will be used to launch the app. If setting the path, the version must also be set to match.",
-)
-flags.DEFINE_string(
-    "glyphs_version_2",
-    default = None,
-    help = "Optional version string for the Glyphs app instance used as tool 2. Must contain the major version. Can be specified further with the build number, separated by a period (e. g. '4.3837'). If setting the path, the version must also be set to match.",
+    help = "Required path to the application bundle of the specific Glyphs app version to be used as tool 1. Please note that if a different instance of the Glyphs app with the same major version is already running, that version may be used instead.",
 )
 flags.DEFINE_string(
     "glyphs_path_2",
     default = None,
-    help = "Optional path to the application bundle of the Glyphs app instance used as tool 2. You should specify this if the app is not yet running. Otherwise, the bundle identifier (without build number) will be used to launch the app. If setting the path, the version must also be set to match.",
+    help = "Required path to the application bundle of the specific Glyphs app version to be used as tool 2. Please note that if a different instance of the Glyphs app with the same major version is already running, that version may be used instead.",
 )
 flags.DEFINE_enum(
     "rebuild",
@@ -536,6 +527,7 @@ MAX_CONNECTION_TRIES = 10
 
 
 BASE_BUNDLE_IDENTIFIER = "com.GeorgSeifert.Glyphs"
+UNKNOWN_NAME = "Unknown"
 
 
 # `fontc_crater/ttx_diff_runner.rs` expects nothing but JSON on `stdout`,
@@ -545,38 +537,53 @@ def print_if_not_json(message: str):
         print(message)
 
 
+# Returns the version and build numbers of the application at the given bundle
+# path. Returns the string `Unknown` for values that cannot be found.
+def app_bundle_version(bundle_path) -> (str, str):
+    info_plist_path = os.path.join(bundle_path, "Contents", "Info.plist")
+    if not os.path.exists(info_plist_path):
+        raise FileNotFoundError(f"Info.plist not found at: {info_plist_path}")
+
+    with open(info_plist_path, 'rb') as f:
+        plist = plistlib.load(f)
+
+    # CFBundleShortVersionString is the user-facing version
+    # CFBundleVersion is typically a build number
+    version = plist.get("CFBundleShortVersionString", UNKNOWN_NAME)
+    build_number = plist.get("CFBundleVersion", UNKNOWN_NAME)
+    return version, build_number
+
+
 # This function has been adapted from `Glyphs remote scripts/Glyphs.py`
 # in the `https://github.com/schriftgestalt/GlyphsSDK` repository.
-def application(version_string: str, bundle_path: str = None) -> NSDistantObject:
-    registered_name = BASE_BUNDLE_IDENTIFIER + version_string
+def application(bundle_path: str) -> (NSDistantObject, str, str):
+    version, build_number = app_bundle_version(bundle_path)
+    if version == UNKNOWN_NAME or build_number == UNKNOWN_NAME:
+        print("Cannot determine version or build number for app bundle at {bundle_path}")
+        return None, None, None
+
+    major_version = version.split('.', 1)[0]
+
+    # The registered name of a Glyphs app instance can include the build number.
+    registered_name = f"{BASE_BUNDLE_IDENTIFIER}{major_version}.{build_number}"
 
     # First, try to establish a connection to a running app matching the
     # registered name. We need only a low number of maximum tries because we
     # would not have to wait for the app to launch.
     proxy = application_proxy(registered_name, INITIAL_CONNECTION_TRIES)
     if proxy is not None:
-        return proxy
+        return proxy, version, build_number
 
-    # There is no running app, or another error occurred. Try to launch the app.
-    launch_option = ""
-    if bundle_path is not None:
-        print_if_not_json(f"Opening application at {bundle_path}")
-        launch_option = f"-a '{bundle_path}'"
-    else:
-        # We need to remove the build number from the version string, if 
-        # present, as bundle identifiers do not include them.
-        major_version_string = version_string.rsplit('.', 1)[0]
-        bundle_identifier = BASE_BUNDLE_IDENTIFIER + major_version_string
-        print_if_not_json(f"Opening application for {bundle_identifier}")
-        launch_option = f"-b {bundle_identifier}"
-
+    # There is no running app, or another error occurred. Try to launch the app
+    # via the provided bundle path.
     # `-g` opens the application in the background.
     # `-j` opens the application hidden (its windows are not visible).
-    os.system(f"open {launch_option} -g -j")
+    print_if_not_json(f"Opening application at {bundle_path}")
+    os.system(f"open -a '{bundle_path}' -g -j")
 
     # Try to establish a connection to the running app.
     # Return the value even if it is `None`.
-    return application_proxy(registered_name, MAX_CONNECTION_TRIES)
+    return application_proxy(registered_name, MAX_CONNECTION_TRIES), version, build_number
 
 
 # This function has been adapted from `Glyphs remote scripts/Glyphs.py`
@@ -1651,16 +1658,18 @@ class GfToolsFontmakeTool(Tool):
 
 @dataclass(unsafe_hash=True)
 class GlyphsAppTool(Tool):
-    version_string: str
     bundle_path: str = None
 
     # Created once, internal.
     _glyphs_proxy: NSDistantObject = field(init=False, repr=False)
+    
+    _version: str = None
+    _build_number: str = None
 
     def __post_init__(self):
-        self._glyphs_proxy = application(self.version_string, self.bundle_path)
+        self._glyphs_proxy, self._version, self._build_number = application(self.bundle_path)
         if self._glyphs_proxy is None:
-            sys.exit("No JSTalk connection to Glyphs {self.version_string}")
+            sys.exit("No JSTalk connection to Glyphs app at {self.bundle_path}")
 
     @property
     def tool_type(self) -> ToolType:
@@ -1668,8 +1677,8 @@ class GlyphsAppTool(Tool):
 
     @property
     def tool_name(self) -> str:
-        underscored = self.version_string.replace(".", "_")
-        return f"{self.tool_type}_{underscored}"
+        underscored_version = self._version.replace(".", "_")
+        return f"{self.tool_type}_{underscored_version}_{self._build_number}"
 
     @property
     def font_file_extension(self) -> str:
@@ -1716,41 +1725,23 @@ def main(argv):
             # `compare` is either not set or an unsupported value.
             sys.exit("Must specify two tools or a compare mode")
 
-    # Set default Glyphs app versions if neither versions or paths are set.
-    # This allows `--compare glyphsapp` to work without additional flags, or
-    # with specifying just one of the apps.
-    # Default to version 4 if only one of the tools is set to the Glyphs app and
-    # neither version or path are set.
-    if tool_type_1 == ToolType.GLYPHS_APP and tool_type_2 == ToolType.GLYPHS_APP:
-        if FLAGS.glyphs_version_1 is None and FLAGS.glyphs_path_1 is None and FLAGS.glyphs_version_2 is None and FLAGS.glyphs_path_2 is None:
-            FLAGS.glyphs_version_1 = GLYPHS_VERSION_STRING_3
-            FLAGS.glyphs_version_2 = GLYPHS_VERSION_STRING_4
-        elif FLAGS.glyphs_version_1 is None and FLAGS.glyphs_path_1 is None:
-            FLAGS.glyphs_version_1 = GLYPHS_VERSION_STRING_4
-        elif FLAGS.glyphs_version_2 is None and FLAGS.glyphs_path_2 is None:
-            FLAGS.glyphs_version_2 = GLYPHS_VERSION_STRING_4
-    elif tool_type_1 == ToolType.GLYPHS_APP:
-        if FLAGS.glyphs_version_1 is None and FLAGS.glyphs_path_1 is None:
-            FLAGS.glyphs_version_1 = GLYPHS_VERSION_STRING_4
-    elif tool_type_2 == ToolType.GLYPHS_APP:
-        if FLAGS.glyphs_version_2 is None and FLAGS.glyphs_path_2 is None:
-            FLAGS.glyphs_version_2 = GLYPHS_VERSION_STRING_4
+    # Ensure that required Glyphs app bundle paths are set.
+    if tool_type_1 == ToolType.GLYPHS_APP and FLAGS.glyphs_path_1 is None:
+        sys.exit("Must specify path to Glyphs app bundle used as tool 1")
+    if tool_type_2 == ToolType.GLYPHS_APP and FLAGS.glyphs_path_2 is None:
+        sys.exit("Must specify path to Glyphs app bundle used as tool 2")
 
-    # Ensure that Glyphs app versions are set if applications paths are set.
-    if tool_type_1 == ToolType.GLYPHS_APP and FLAGS.glyphs_version_1 is None and FLAGS.glyphs_path_1 is not None:
-        sys.exit("Must specify Glyphs version if specifying path (tool 1)")
-    if tool_type_2 == ToolType.GLYPHS_APP and FLAGS.glyphs_version_2 is None and FLAGS.glyphs_path_2 is not None:
-        sys.exit("Must specify Glyphs version if specifying path (tool 2)")
-
-    # If both tools are the same, their versions (or at least build) must be
-    # distinct. Currently, this is supported for Glyphs app instances only.
+    # Currently, having two tools of the same type is supported for Glyphs app
+    # instances only. These must have at least different build numbers.
     if tool_type_1 == tool_type_2:
-        if tool_type_1 == ToolType.GLYPHS_APP and tool_type_2 == ToolType.GLYPHS_APP:
-            if FLAGS.glyphs_version_1 == FLAGS.glyphs_version_2:
-                sys.exit("Must specify two different Glyphs app builds")
-        else:
-            # Any other two tools have to be different.
-            sys.exit("Must specify two different tools or two different Glyphs app builds")
+        if tool_type_1 != ToolType.GLYPHS_APP:
+            sys.exit("Must specify two different tools")
+
+        # Both tools are Glyphs apps.
+        version_1, build_number_1 = app_bundle_version(FLAGS.glyphs_path_1)
+        version_2, build_number_2 = app_bundle_version(FLAGS.glyphs_path_2)
+        if version_1 == version_2 and build_number_1 == build_number_2:
+            sys.exit("Must specify two different Glyphs app builds")
 
     otl_bin = get_crate_path(FLAGS.normalizer_path, root, "otl-normalizer")
     assert otl_bin.is_file(), f"normalizer path '{otl_bin}' does not exist"
@@ -1777,7 +1768,7 @@ def main(argv):
     elif tool_type_1 == ToolType.FONTMAKE_GFTOOLS:
         tool_1 = GfToolsFontmakeTool(source)
     elif tool_type_1 == ToolType.GLYPHS_APP:
-        tool_1 = GlyphsAppTool(source, FLAGS.glyphs_version_1, FLAGS.glyphs_path_1)
+        tool_1 = GlyphsAppTool(source, FLAGS.glyphs_path_1)
 
     tool_2 = None;
     if tool_type_2 == ToolType.FONTC:
@@ -1789,7 +1780,7 @@ def main(argv):
     elif tool_type_2 == ToolType.FONTMAKE_GFTOOLS:
         tool_2 = GfToolsFontmakeTool(source)
     elif tool_type_2 == ToolType.GLYPHS_APP:
-        tool_2 = GlyphsAppTool(source, FLAGS.glyphs_version_2, FLAGS.glyphs_path_2)
+        tool_2 = GlyphsAppTool(source, FLAGS.glyphs_path_2)
 
     if tool_1 is None or tool_2 is None:
         sys.exit("Failed to configure one or both tools")
