@@ -21,8 +21,8 @@ use maud::{html, Markup, PreEscaped};
 use super::{DiffResults, RunSummary};
 
 static HTML_FILE: &str = "index.html";
-const NEW_TOOL_NAME: &str = "new_tool";
-const OLD_TOOL_NAME: &str = "old_tool";
+const TOOL_1_NAME: &str = "tool_1";
+const TOOL_2_NAME: &str = "tool_2";
 
 pub(super) fn generate(
     target_dir: &Path,
@@ -59,10 +59,10 @@ fn make_html(
     cache_dir: &Path,
     mode: args::RunMode,
 ) -> Result<String, Error> {
-    let new_tool_name = tool_name(mode, true);
-    let old_tool_name = tool_name(mode, false);
-    let new_tool_head = format!("{new_tool_name} 💥");
-    let old_tool_head = format!("{old_tool_name} 💥");
+    let tool_1_name = tool_name(mode, true);
+    let tool_2_name = tool_name(mode, false);
+    let tool_1_head = format!("{tool_1_name} 💥");
+    let tool_2_head = format!("{tool_2_name} 💥");
     let introduction = make_introduction(mode);
     let table_body = make_table_body(summary);
     let css = include_str!("../../resources/style.css");
@@ -74,8 +74,8 @@ fn make_html(
                     th.rev scope="col" { "rev" }
                     th.total scope="col" { "targets" }
                     th.identical scope="col" { "identical" }
-                    th.new_tool_err scope="col" { (new_tool_head) }
-                    th.old_tool_err scope="col" { (old_tool_head) }
+                    th.tool_1_err scope="col" { (tool_1_head) }
+                    th.tool_2_err scope="col" { (tool_2_head) }
                     th.both_err scope="col" { "both 💥" }
                     th.other_err scope="col" { "other 💥" }
                     th.diff_erc scope="col" { "similarity %" }
@@ -118,8 +118,8 @@ fn make_html(
     ",
     );
 
-    let new_tool_link_title = format!("{new_tool_name} only");
-    let old_tool_link_title = format!("{old_tool_name} only");
+    let tool_1_link_title = format!("{tool_1_name} only");
+    let tool_2_link_title = format!("{tool_2_name} only");
     let raw_html = html! {
         (maud::DOCTYPE)
         html {
@@ -141,9 +141,9 @@ fn make_html(
                     ", "
                     {a href = "#diff-report" { "per-target diffs" } }
                     ", or compile failures for "
-                    {a href = "#new-tool-failures" { (new_tool_link_title) } }
+                    {a href = "#tool-1-failures" { (tool_1_link_title) } }
                     ", "
-                    {a href = "#old-tool-failures" { (old_tool_link_title) } }
+                    {a href = "#tool-2-failures" { (tool_2_link_title) } }
                     ", "
                     {a href = "#both-failures" { "both compilers" } }
                 }
@@ -156,12 +156,12 @@ fn make_html(
     tidy_html(&raw_html)
 }
 
-fn tool_name(mode: args::RunMode, is_new: bool) -> String {
+fn tool_name(mode: args::RunMode, is_tool_1: bool) -> String {
     let name;
     if mode == RunMode::GlyphsApp {
-        name = if is_new { "Glyphs 4" } else { "Glyphs 3" };
+        name = if is_tool_1 { "Glyphs 3" } else { "Glyphs 4" };
     } else {
-        name = if is_new { "fontc" } else { "fontmake" };
+        name = if is_tool_1 { "fontmake" } else { "fontc" };
     }
     
     name.to_string()
@@ -217,14 +217,14 @@ fn make_table_body(runs: &[RunSummary]) -> Markup {
             prev.map(|p| p.stats.identical as i32),
             More::IsBetter,
         );
-        let new_tool_err_diff = make_delta_decoration(
-            run.stats.new_tool_failed as i32,
-            prev.map(|p| p.stats.new_tool_failed as i32),
+        let tool_1_err_diff = make_delta_decoration(
+            run.stats.tool_1_failed as i32,
+            prev.map(|p| p.stats.tool_1_failed as i32),
             More::IsWorse,
         );
-        let old_tool_err_diff = make_delta_decoration(
-            run.stats.old_tool_failed as i32,
-            prev.map(|p| p.stats.old_tool_failed as i32),
+        let tool_2_err_diff = make_delta_decoration(
+            run.stats.tool_2_failed as i32,
+            prev.map(|p| p.stats.tool_2_failed as i32),
             More::IsWorse,
         );
         let both_err_diff = make_delta_decoration(
@@ -253,15 +253,15 @@ fn make_table_body(runs: &[RunSummary]) -> Markup {
         let short_rev = run.fontc_rev.get(..16).unwrap_or(run.fontc_rev.as_str());
         let err_cells = if is_most_recent {
             html! {
-                td.new_tool_err { a href = "#new-tool-failures" {  (run.stats.new_tool_failed) " " (new_tool_err_diff)  } }
-                td.old_tool_err { a href = "#old-tool-failures" {  (run.stats.old_tool_failed) " " (old_tool_err_diff)  } }
+                td.tool_1_err { a href = "#tool-1-failures" {  (run.stats.tool_1_failed) " " (tool_1_err_diff)  } }
+                td.tool_2_err { a href = "#tool-2-failures" {  (run.stats.tool_2_failed) " " (tool_2_err_diff)  } }
                 td.both_err { a href = "#both-failures" {  (run.stats.both_failed) " " (both_err_diff) } }
                 td.other_err { a href = "#other-failures" {  (run.stats.other_failure) " " (other_err_diff)  } }
             }
         } else {
             html! {
-            td.new_tool_err {  (run.stats.new_tool_failed) " " (new_tool_err_diff)  }
-            td.old_tool_err {  (run.stats.old_tool_failed) " " (old_tool_err_diff)  }
+            td.tool_1_err {  (run.stats.tool_1_failed) " " (tool_1_err_diff)  }
+            td.tool_2_err {  (run.stats.tool_2_failed) " " (tool_2_err_diff)  }
             td.both_err {  (run.stats.both_failed) " " (both_err_diff) }
             td.other_err {  (run.stats.other_failure) " " (other_err_diff)  }
             }
@@ -341,16 +341,16 @@ fn make_detailed_report(
     cache_dir: &Path,
     mode: args::RunMode,
 ) -> Markup {
-    let new_tool_name = tool_name(mode, true);
-    let old_tool_name = tool_name(mode, false);
+    let tool_1_name = tool_name(mode, true);
+    let tool_2_name = tool_name(mode, false);
     let reports = vec![
         make_diff_report(
             current,
             prev,
             sources,
             cache_dir,
-            &new_tool_name,
-            &old_tool_name,
+            &tool_1_name,
+            &tool_2_name,
         ),
         make_summary_report(current),
         make_error_report(current, prev, sources, cache_dir, mode),
@@ -465,8 +465,8 @@ fn make_diff_report(
     prev: &DiffResults,
     sources: &BTreeMap<PathBuf, String>,
     cache_dir: &Path,
-    new_tool_name: &str,
-    old_tool_name: &str,
+    tool_1_name: &str,
+    tool_2_name: &str,
 ) -> Markup {
     fn get_total_diff_ratios(results: &DiffResults) -> BTreeMap<&Target, f32> {
         results
@@ -517,7 +517,7 @@ fn make_diff_report(
         let decoration = make_delta_decoration(*ratio, prev_ratio, More::IsBetter);
         let changed_tag_list = list_different_tables(diff_details).unwrap_or_default();
         let diff_table =
-            format_diff_report_detail_table(diff_details, prev_details, new_tool_name, old_tool_name);
+            format_diff_report_detail_table(diff_details, prev_details, tool_1_name, tool_2_name);
 
         let details = html! {
             div.diff_info {
@@ -585,39 +585,39 @@ fn make_error_report(
     cache_dir: &Path,
     mode: args::RunMode,
 ) -> Markup {
-    let current_new_tool = get_compiler_failures(current, NEW_TOOL_NAME);
-    let prev_new_tool = get_compiler_failures(prev, NEW_TOOL_NAME);
-    let current_old_tool = get_compiler_failures(current, OLD_TOOL_NAME);
-    let prev_old_tool = get_compiler_failures(prev, OLD_TOOL_NAME);
+    let current_tool_1 = get_compiler_failures(current, TOOL_1_NAME);
+    let prev_tool_1 = get_compiler_failures(prev, TOOL_1_NAME);
+    let current_tool_2 = get_compiler_failures(current, TOOL_2_NAME);
+    let prev_tool_2 = get_compiler_failures(prev, TOOL_2_NAME);
 
-    let current_both = current_new_tool
+    let current_both = current_tool_1
         .keys()
         .copied()
-        .filter(|k| current_old_tool.contains_key(k))
+        .filter(|k| current_tool_2.contains_key(k))
         .collect::<BTreeSet<_>>();
-    let prev_both = prev_new_tool
+    let prev_both = prev_tool_1
         .keys()
         .copied()
-        .filter(|k| prev_old_tool.contains_key(k))
+        .filter(|k| prev_tool_2.contains_key(k))
         .collect::<BTreeSet<_>>();
 
     let current_other = get_other_failures(current);
     let prev_other = get_other_failures(prev);
     
-    let new_tool_name = tool_name(mode, true);
-    let old_tool_name = tool_name(mode, false);
+    let tool_1_name = tool_name(mode, true);
+    let tool_2_name = tool_name(mode, false);
 
-    let new_tool = if current_new_tool.len() - current_both.len() > 0 {
+    let tool_1 = if current_tool_1.len() - current_both.len() > 0 {
         make_error_report_group(
-            new_tool_name.as_str(),
+            tool_1_name.as_str(),
             "new-tool",
-            current_new_tool
+            current_tool_1
                 .keys()
                 .copied()
                 .filter(|k| !current_both.contains(k))
-                .map(|k| (k, !prev_new_tool.contains_key(k))),
+                .map(|k| (k, !prev_tool_1.contains_key(k))),
             |path| {
-                current_new_tool
+                current_tool_1
                     .get(path)
                     .copied()
                     .map(format_compiler_error)
@@ -630,17 +630,17 @@ fn make_error_report(
         Default::default()
     };
 
-    let old_tool = if current_old_tool.len() - current_both.len() > 0 {
+    let tool_2 = if current_tool_2.len() - current_both.len() > 0 {
         make_error_report_group(
-            old_tool_name.as_str(),
+            tool_2_name.as_str(),
             "old-tool",
-            current_old_tool
+            current_tool_2
                 .keys()
                 .copied()
                 .filter(|k| (!current_both.contains(k)))
-                .map(|k| (k, !prev_old_tool.contains_key(k))),
+                .map(|k| (k, !prev_tool_2.contains_key(k))),
             |path| {
-                current_old_tool
+                current_tool_2
                     .get(path)
                     .copied()
                     .map(format_compiler_error)
@@ -662,22 +662,22 @@ fn make_error_report(
                 .copied()
                 .map(|k| (k, !prev_both.contains(k))),
             |path| {
-                    let new_tool_err = current_new_tool
-                        .get(path)
+                let tool_1_err = current_tool_1
+                    .get(path)
                     .copied()
                     .map(format_compiler_error)
                     .unwrap_or_default();
-                let old_tool_err = current_old_tool
+                let tool_2_err = current_tool_2
                     .get(path)
                     .copied()
                     .map(format_compiler_error)
                     .unwrap_or_default();
 
                 html! {
-                    .h5 { (new_tool_name) }
-                    (new_tool_err)
-                    .h5 { (old_tool_name) }
-                    (old_tool_err)
+                    .h5 { (tool_1_name) }
+                    (tool_1_err)
+                    .h5 { (tool_2_name) }
+                    (tool_2_err)
                 }
             },
             sources,
@@ -711,8 +711,8 @@ fn make_error_report(
     };
 
     html! {
-        (new_tool)
-        (old_tool)
+        (tool_1)
+        (tool_2)
         (both)
         (other)
     }
@@ -743,8 +743,8 @@ fn list_different_tables(current: &DiffOutput) -> Option<String> {
 fn format_diff_report_detail_table(
     current: &DiffOutput,
     prev: Option<&DiffOutput>,
-    new_tool_name: &str,
-    old_tool_name: &str,
+    tool_1_name: &str,
+    tool_2_name: &str,
 ) -> Markup {
     let value_decoration = |table: &str, value: DiffValue| -> Markup {
         let prev_value = match prev {
@@ -835,12 +835,12 @@ fn format_diff_report_detail_table(
                                 @match value {
                                     DiffValue::Ratio(_) => { (value) " " ( {value_decoration(table, value) }) },
                                     DiffValue::Only(compiler) => {
-                                        // Replace generic `new_tool`/`old_tool`
+                                        // Replace generic `tool_1`/`tool_2`
                                         // string with actual tool name.
-                                        @if compiler == NEW_TOOL_NAME {
-                                            (new_tool_name) " only"
+                                        @if compiler == TOOL_1_NAME {
+                                            (tool_1_name) " only"
                                         } @else {
-                                            (old_tool_name) " only"
+                                            (tool_2_name) " only"
                                         }
                                     }
                                 }
@@ -950,8 +950,8 @@ fn get_compiler_failures<'a>(
             return None;
         };
         match compiler {
-            NEW_TOOL_NAME => compfail.new_tool.as_ref(),
-            OLD_TOOL_NAME => compfail.old_tool.as_ref(),
+            TOOL_1_NAME => compfail.tool_1.as_ref(),
+            TOOL_2_NAME => compfail.tool_2.as_ref(),
             _ => panic!("this is quite unexpected"),
         }
     };
