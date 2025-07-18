@@ -24,10 +24,10 @@ Usage:
 
     # Rebuild with Glyphs 3 and Glyphs 4 and compare. The paths to the app
     # bundles have to be specified.
-    python resources/scripts/ttx_diff.py --compare glyphsapp --tool_path_1 '/Applications/Glyphs 3.3.1 (3343).app' --tool_path_2 '/Applications/Glyphs 4.0a (3837).app' ../OswaldFont/sources/Oswald.glyphs
+    python resources/scripts/ttx_diff.py --compare glyphsapp --tool_1_path '/Applications/Glyphs 3.3.1 (3343).app' --tool_2_path '/Applications/Glyphs 4.0a (3837).app' ../OswaldFont/sources/Oswald.glyphs
     
     # Rebuild with precompiled `fontc` binary and Glyphs 4 and compare.
-    python resources/scripts/ttx_diff.py --tool_type_1 fontc --tool_path_1 ~/fontc/target/release/fontc --tool_type_2 glyphsapp --tool_path_2 '/Applications/Glyphs 4.0a (3837).app' ../OswaldFont/sources/Oswald.glyphs
+    python resources/scripts/ttx_diff.py --tool_1_type fontc --tool_1_path ~/fontc/target/release/fontc --tool_2_type glyphsapp --tool_2_path '/Applications/Glyphs 4.0a (3837).app' ../OswaldFont/sources/Oswald.glyphs
 
 JSON:
     If the `--json` flag is passed, this tool will output JSON.
@@ -112,9 +112,6 @@ TOOL_1_NAME = "tool_1"
 TOOL_2_NAME = "tool_2"
 TTX_NAME = "ttx"
 
-GLYPHS_VERSION_STRING_3 = "3"
-GLYPHS_VERSION_STRING_4 = "4"
-
 FLAGS = flags.FLAGS
 
 # used instead of a tag for the normalized mark/kern output
@@ -141,27 +138,27 @@ flags.DEFINE_enum_class(
     "compare",
     default = Compare.UNSET,
     enum_class = Compare,
-    help = "Compare results using either a default build, a build managed by `gftools`, or two versions of the Glyphs app.\nThese are presets for specific `tool_type_1` and `tool_type_2` combinations. `default` sets tool 1 to `fontmake` and tool 2 to `fontc`; `gftools` sets tool 1 to `fontmake_gftools` and tool 2 to `fontc_gftools`.\nNote that as of 2023-05-21 we still sets flags for `fontmake` to match `fontc` behavior.",
+    help = "Compare results using either a default build, a build managed by `gftools`, or two versions of the Glyphs app.\nThese are presets for specific `tool_1_type` and `tool_2_type` combinations. `default` sets tool 1 to `fontmake` and tool 2 to `fontc`; `gftools` sets tool 1 to `fontmake_gftools` and tool 2 to `fontc_gftools`.\nNote that as of 2023-05-21 we still sets flags for `fontmake` to match `fontc` behavior.",
 )
 flags.DEFINE_enum_class(
-    "tool_type_1",
+    "tool_1_type",
     default = ToolType.UNSET,
     enum_class = ToolType,
     help = "Choose the type of the first tool which should be used to build fonts to compare. Note that as of 2023-05-21, we still set flags for `fontmake` to match `fontc` behavior.",
 )
 flags.DEFINE_string(
-    "tool_path_1",
+    "tool_1_path",
     default = None,
     help = "For `fontc`: Optional path to precompiled `fontc` binary to be used as tool 1.\nFor `glyphsapp`: Required path to the application bundle of the specific Glyphs app version to be used as tool 1.\nPlease note that if a different instance of the Glyphs app with the same major version is already running, that version may be used instead.",
 )
 flags.DEFINE_enum_class(
-    "tool_type_2",
+    "tool_2_type",
     default = ToolType.UNSET,
     enum_class = ToolType,
     help = "Choose the type of the second tool which should be used to build fonts to compare. Note that as of 2023-05-21, we still set flags for `fontmake` to match `fontc` behavior.",
 )
 flags.DEFINE_string(
-    "tool_path_2",
+    "tool_2_path",
     default = None,
     help = "For `fontc`: Optional path to precompiled `fontc` binary to be used as tool 2.\nFor `glyphsapp`: Required path to the application bundle of the specific Glyphs app version to be used as tool 2.\nPlease note that if a different instance of the Glyphs app with the same major version is already running, that version may be used instead.",
 )
@@ -1277,11 +1274,11 @@ def check_sizes(font_file_1: Path, font_file_2: Path):
 def generate_output(
     build_dir: Path,
     otl_norm_bin: Path,
-    tool_type_1: ToolType,
-    tool_name_1: str,
+    tool_1_type: ToolType,
+    tool_1_name: str,
     font_file_1: Path,
-    tool_type_2: ToolType,
-    tool_name_2: str,
+    tool_2_type: ToolType,
+    tool_2_name: str,
     font_file_2: Path
 ):
     ttx_1 = run_ttx(font_file_1)
@@ -1298,15 +1295,15 @@ def generate_output(
     # We skip the `reduce_diff_noise` function unless one of the tools is
     # `fontc` and the other is `fontmake`.
     fontc_tree = None
-    if tool_type_1 == ToolType.FONTC or tool_type_1 == ToolType.FONTC_GFTOOLS:
+    if tool_1_type == ToolType.FONTC or tool_1_type == ToolType.FONTC_GFTOOLS:
         fontc_tree = tree_1
-    elif tool_type_2 == ToolType.FONTC or tool_type_2 == ToolType.FONTC_GFTOOLS:
+    elif tool_2_type == ToolType.FONTC or tool_2_type == ToolType.FONTC_GFTOOLS:
         fontc_tree = tree_2
 
     fontmake_tree = None
-    if tool_type_1 == ToolType.FONTMAKE or tool_type_1 == ToolType.FONTMAKE_GFTOOLS:
+    if tool_1_type == ToolType.FONTMAKE or tool_1_type == ToolType.FONTMAKE_GFTOOLS:
         fontmake_tree = tree_1
-    elif tool_type_2 == ToolType.FONTMAKE or tool_type_2 == ToolType.FONTMAKE_GFTOOLS:
+    elif tool_2_type == ToolType.FONTMAKE or tool_2_type == ToolType.FONTMAKE_GFTOOLS:
         fontmake_tree = tree_2
 
     if fontc_tree is not None and fontmake_tree is not None:
@@ -1314,8 +1311,8 @@ def generate_output(
         # which is `fontmake`.
         reduce_diff_noise(fontc=fontc_tree, fontmake=fontmake_tree)
 
-    map_1 = extract_comparables(tree_1, build_dir, tool_name_1)
-    map_2 = extract_comparables(tree_2, build_dir, tool_name_2)
+    map_1 = extract_comparables(tree_1, build_dir, tool_1_name)
+    map_2 = extract_comparables(tree_2, build_dir, tool_2_name)
     size_diffs = check_sizes(font_file_1, font_file_2)
     map_1[MARK_KERN_NAME] = gpos_1
     map_2[MARK_KERN_NAME] = gpos_2
@@ -1323,7 +1320,7 @@ def generate_output(
         map_1[LIG_CARET_NAME] = gdef_1
     if len(gdef_2):
         map_2[LIG_CARET_NAME] = gdef_2
-    result = {tool_name_1: map_1, tool_name_2: map_2}
+    result = {tool_1_name: map_1, tool_2_name: map_2}
     if len(size_diffs) > 0:
         result["sizes"] = size_diffs
 
@@ -1333,22 +1330,22 @@ def generate_output(
 def print_output(
     build_dir: Path,
     output: dict[str, dict[str, Any]],
-    tool_name_1: str,
-    tool_name_2: str
+    tool_1_name: str,
+    tool_2_name: str
 ):
-    map_1 = output[tool_name_1]
-    map_2 = output[tool_name_2]
+    map_1 = output[tool_1_name]
+    map_2 = output[tool_2_name]
     print("COMPARISON")
     t1 = set(map_1.keys())
     t2 = set(map_2.keys())
     if t1 != t2:
         if t1 - t2:
             tags = ", ".join(f"'{t}'" for t in sorted(t1 - t2))
-            print(f"  Only {tool_name_1} produced {tags}")
+            print(f"  Only {tool_1_name} produced {tags}")
 
         if t2 - t1:
             tags = ", ".join(f"'{t}'" for t in sorted(t2 - t1))
-            print(f"  Only {tool_name_2} produced {tags}")
+            print(f"  Only {tool_2_name} produced {tags}")
 
     for tag in sorted(t1 & t2):
         t1s = map_1[tag]
@@ -1357,8 +1354,8 @@ def print_output(
             print(f"  Identical '{tag}'")
         else:
             difference = diff_ratio(t1s, t2s)
-            p1 = build_dir / path_for_output_item(tag, tool_name_1)
-            p2 = build_dir / path_for_output_item(tag, tool_name_2)
+            p1 = build_dir / path_for_output_item(tag, tool_1_name)
+            p2 = build_dir / path_for_output_item(tag, tool_2_name)
             print(f"  DIFF '{tag}', {p1} {p2} ({difference:.3%})")
     if output.get("sizes"):
         print("SIZE DIFFERENCES")
@@ -1368,11 +1365,11 @@ def print_output(
 
 def jsonify_output(
     output: dict[str, dict[str, Any]],
-    tool_name_1: str,
-    tool_name_2: str
+    tool_1_name: str,
+    tool_2_name: str
 ):
-    map_1 = output[tool_name_1]
-    map_2 = output[tool_name_2]
+    map_1 = output[tool_1_name]
+    map_2 = output[tool_2_name]
     sizes = output.get("sizes", {})
     all_tags = set(map_1.keys()) | set(map_2.keys())
     out = dict()
@@ -1381,10 +1378,10 @@ def jsonify_output(
     for tag in all_tags:
         if tag not in map_1:
             different_lines += len(map_2[tag])
-            out[tag] = tool_name_2
+            out[tag] = tool_2_name
         elif tag not in map_2:
             different_lines += len(map_1[tag])
-            out[tag] = tool_name_1
+            out[tag] = tool_1_name
         else:
             s1 = map_1[tag]
             s2 = map_2[tag]
@@ -1458,10 +1455,9 @@ def report_errors_and_exit_if_there_were_any(errors: dict):
     sys.exit(2)
 
 
-# for reproducing crater results we have a syntax that lets you specify a
-# repo url as the source.
-# in this scheme we pass the path to the particular source (relative the repo root)
-# as a url fragment
+# for reproducing crater results we have a syntax that lets you specify a repo
+# url as the source. in this scheme we pass the path to the particular source
+# (relative the repo root) as a url fragment
 def resolve_source(source: str, cache_dir: Path) -> Path:
     if source.startswith("git@") or source.startswith("https://"):
         source_url = urlparse(source)
@@ -1493,25 +1489,25 @@ def resolve_source(source: str, cache_dir: Path) -> Path:
 
 def delete_things_we_must_rebuild(
     rebuild: str, 
-    tool_name_1: str, 
+    tool_1_name: str, 
     font_file_1: Path, 
-    tool_name_2: str, 
+    tool_2_name: str, 
     font_file_2: Path
 ):
     # Replace generic rebuild flag with specific tool name.
     if rebuild == TOOL_1_NAME:
-        rebuild = tool_name_1
+        rebuild = tool_1_name
     elif rebuild == TOOL_2_NAME:
-        rebuild = tool_name_2
+        rebuild = tool_2_name
 
-    for tool, font_file_path in [(tool_name_1, font_file_1), (tool_name_2, font_file_2)]:
-        must_rebuild = rebuild in [tool, "both"]
+    for tool_name, font_file in [(tool_1_name, font_file_1), (tool_2_name, font_file_2)]:
+        must_rebuild = rebuild in [tool_name, "both"]
         if must_rebuild:
             for path in [
-                font_file_path,
-                font_file_path.with_suffix(".ttx"),
-                font_file_path.with_suffix(".markkern.txt"),
-                font_file_path.with_suffix(".ligcaret.txt"),
+                font_file,
+                font_file.with_suffix(".ttx"),
+                font_file.with_suffix(".markkern.txt"),
+                font_file.with_suffix(".ligcaret.txt"),
             ]:
                 if path.exists():
                     os.remove(path)
@@ -1701,39 +1697,39 @@ def main(argv):
     if root.name != FONTC_NAME:
         sys.exit("Expected to be at the root of fontc")
 
-    # Set `tool_type_1` and `tool_type_2` from `compare` flag if one or both were not set.
-    tool_type_1 = FLAGS.tool_type_1
-    tool_type_2 = FLAGS.tool_type_2
-    if tool_type_1 == ToolType.UNSET or tool_type_2 == ToolType.UNSET:
+    # Set `tool_1_type` and `tool_2_type` from `compare` flag if one or both were not set.
+    tool_1_type = FLAGS.tool_1_type
+    tool_2_type = FLAGS.tool_2_type
+    if tool_1_type == ToolType.UNSET or tool_2_type == ToolType.UNSET:
         compare = FLAGS.compare
         if compare == Compare.DEFAULT:
-            tool_type_1 = ToolType.FONTMAKE
-            tool_type_2 = ToolType.FONTC
+            tool_1_type = ToolType.FONTMAKE
+            tool_2_type = ToolType.FONTC
         elif compare == Compare.GFTOOLS:
-            tool_type_1 = ToolType.FONTMAKE_GFTOOLS
-            tool_type_2 = ToolType.FONTC_GFTOOLS
+            tool_1_type = ToolType.FONTMAKE_GFTOOLS
+            tool_2_type = ToolType.FONTC_GFTOOLS
         elif compare == Compare.GLYPHSAPP:
-            tool_type_1 = ToolType.GLYPHSAPP
-            tool_type_2 = ToolType.GLYPHSAPP
+            tool_1_type = ToolType.GLYPHSAPP
+            tool_2_type = ToolType.GLYPHSAPP
         else:
             # `compare` is either not set or an unsupported value.
             sys.exit("Must specify two tools or a compare mode")
 
     # Ensure that required Glyphs app bundle paths are set.
-    if tool_type_1 == ToolType.GLYPHSAPP and FLAGS.tool_path_1 is None:
+    if tool_1_type == ToolType.GLYPHSAPP and FLAGS.tool_1_path is None:
         sys.exit("Must specify path to Glyphs app bundle used as tool 1")
-    if tool_type_2 == ToolType.GLYPHSAPP and FLAGS.tool_path_2 is None:
+    if tool_2_type == ToolType.GLYPHSAPP and FLAGS.tool_2_path is None:
         sys.exit("Must specify path to Glyphs app bundle used as tool 2")
 
     # Currently, having two tools of the same type is supported for Glyphs app
     # instances only. These must have at least different build numbers.
-    if tool_type_1 == tool_type_2:
-        if tool_type_1 != ToolType.GLYPHSAPP:
+    if tool_1_type == tool_2_type:
+        if tool_1_type != ToolType.GLYPHSAPP:
             sys.exit("Must specify two different tools")
 
         # Both tools are Glyphs apps.
-        version_1, build_number_1 = app_bundle_version(FLAGS.tool_path_1)
-        version_2, build_number_2 = app_bundle_version(FLAGS.tool_path_2)
+        version_1, build_number_1 = app_bundle_version(FLAGS.tool_1_path)
+        version_2, build_number_2 = app_bundle_version(FLAGS.tool_2_path)
         if version_1 == version_2 and build_number_1 == build_number_2:
             sys.exit("Must specify two different Glyphs app builds")
 
@@ -1753,41 +1749,41 @@ def main(argv):
 
     # Configure tools.
     tool_1 = None;
-    if tool_type_1 == ToolType.FONTC:
-        tool_1 = StandaloneFontcTool(source, root, FLAGS.tool_path_1)
-    elif tool_type_1 == ToolType.FONTMAKE:
+    if tool_1_type == ToolType.FONTC:
+        tool_1 = StandaloneFontcTool(source, root, FLAGS.tool_1_path)
+    elif tool_1_type == ToolType.FONTMAKE:
         tool_1 = StandaloneFontmakeTool(source)
-    elif tool_type_1 == ToolType.FONTC_GFTOOLS:
-        tool_1 = GfToolsFontcTool(source, root, FLAGS.tool_path_1)
-    elif tool_type_1 == ToolType.FONTMAKE_GFTOOLS:
+    elif tool_1_type == ToolType.FONTC_GFTOOLS:
+        tool_1 = GfToolsFontcTool(source, root, FLAGS.tool_1_path)
+    elif tool_1_type == ToolType.FONTMAKE_GFTOOLS:
         tool_1 = GfToolsFontmakeTool(source)
-    elif tool_type_1 == ToolType.GLYPHSAPP:
-        tool_1 = GlyphsAppTool(source, FLAGS.tool_path_1)
+    elif tool_1_type == ToolType.GLYPHSAPP:
+        tool_1 = GlyphsAppTool(source, FLAGS.tool_1_path)
 
     tool_2 = None;
-    if tool_type_2 == ToolType.FONTC:
-        tool_2 = StandaloneFontcTool(source, root, FLAGS.tool_path_2)
-    elif tool_type_2 == ToolType.FONTMAKE:
+    if tool_2_type == ToolType.FONTC:
+        tool_2 = StandaloneFontcTool(source, root, FLAGS.tool_2_path)
+    elif tool_2_type == ToolType.FONTMAKE:
         tool_2 = StandaloneFontmakeTool(source)
-    elif tool_type_2 == ToolType.FONTC_GFTOOLS:
-        tool_2 = GfToolsFontcTool(source, root, FLAGS.tool_path_2)
-    elif tool_type_2 == ToolType.FONTMAKE_GFTOOLS:
+    elif tool_2_type == ToolType.FONTC_GFTOOLS:
+        tool_2 = GfToolsFontcTool(source, root, FLAGS.tool_2_path)
+    elif tool_2_type == ToolType.FONTMAKE_GFTOOLS:
         tool_2 = GfToolsFontmakeTool(source)
-    elif tool_type_2 == ToolType.GLYPHSAPP:
-        tool_2 = GlyphsAppTool(source, FLAGS.tool_path_2)
+    elif tool_2_type == ToolType.GLYPHSAPP:
+        tool_2 = GlyphsAppTool(source, FLAGS.tool_2_path)
 
     if tool_1 is None or tool_2 is None:
         sys.exit("Failed to configure one or both tools")
 
-    tool_name_1 = tool_1.tool_name
-    tool_name_2 = tool_2.tool_name
+    tool_1_name = tool_1.tool_name
+    tool_2_name = tool_2.tool_name
 
-    build_dir = out_dir / f"{tool_name_1}_{tool_name_2}"
+    build_dir = out_dir / f"{tool_1_name}_{tool_2_name}"
     build_dir.mkdir(parents=True, exist_ok=True)
-    eprint(f"Comparing {tool_name_1} and {tool_name_2} in {build_dir}")
+    eprint(f"Comparing {tool_1_name} and {tool_2_name} in {build_dir}")
 
-    font_file_name_1 = f"{tool_name_1}.{tool_1.font_file_extension}"
-    font_file_name_2 = f"{tool_name_2}.{tool_2.font_file_extension}"
+    font_file_name_1 = f"{tool_1_name}.{tool_1.font_file_extension}"
+    font_file_name_2 = f"{tool_2_name}.{tool_2.font_file_extension}"
     font_file_1 = build_dir / font_file_name_1
     font_file_2 = build_dir / font_file_name_2
 
@@ -1795,9 +1791,9 @@ def main(argv):
     # will assume it can reuse anything that still exists.
     delete_things_we_must_rebuild(
         FLAGS.rebuild,
-        tool_name_1,
+        tool_1_name,
         font_file_1,
-        tool_name_2,
+        tool_2_name,
         font_file_2
     )
 
@@ -1820,23 +1816,23 @@ def main(argv):
     output = generate_output(
         build_dir,
         otl_bin,
-        tool_type_1,
-        tool_name_1,
+        tool_1_type,
+        tool_1_name,
         font_file_1,
-        tool_type_2,
-        tool_name_2,
+        tool_2_type,
+        tool_2_name,
         font_file_2
     )
 
     diffs = False
-    if output[tool_name_1] == output[tool_name_2]:
+    if output[tool_1_name] == output[tool_2_name]:
         eprint("output is identical")
     else:
         diffs = True
         if not FLAGS.json:
-            print_output(build_dir, output, tool_name_1, tool_name_2)
+            print_output(build_dir, output, tool_1_name, tool_2_name)
         else:
-            output = jsonify_output(output, tool_name_1, tool_name_2)
+            output = jsonify_output(output, tool_1_name, tool_2_name)
             print_json(output)
 
     sys.exit(diffs * 2)  # 0 or 2
