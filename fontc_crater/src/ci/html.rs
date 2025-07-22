@@ -15,7 +15,6 @@ use crate::{
     BuildType, Target,
 };
 use crate::ci::RunMode;
-use chrono::{DateTime, Utc};
 use maud::{html, Markup, PreEscaped};
 
 use super::{DiffResults, RunSummary};
@@ -37,16 +36,24 @@ pub(super) fn generate(
         super::load_json_if_exists_else_default(&sources_path)?;
     let failures: BTreeMap<String, String> =
         super::load_json_if_exists_else_default(&failures_path)?;
-    let details = summary
-        .iter()
-        .flat_map(|run| match run.try_load_results(target_dir) {
-            Some(Ok(results)) => Some(Ok((run.began, results))),
-            None => None,
-            Some(Err(e)) => Some(Err(e)),
-        })
-        .collect::<Result<HashMap<_, _>, _>>()?;
 
-    let html_text = make_html(&summary, &sources, &details, &failures, cache_dir, mode)?;
+    let (current, prev) = match summary.as_slice() {
+        [.., prev, current] => {
+            let prev = match prev.try_load_results(target_dir) {
+                Ok(prev) => Some(prev),
+                Err(e) => {
+                    log::warn!("failed to load previous run: '{e}'");
+                    None
+                }
+            };
+            (current.try_load_results(target_dir)?, prev)
+        }
+
+        [one] => (one.try_load_results(target_dir)?, None),
+        [] => panic!("can't make html with no data"),
+    };
+
+    let html_text = make_html(&summary, &sources, &current, prev.as_ref(), &failures, cache_dir, mode)?;
     let outpath = target_dir.join(HTML_FILE);
     crate::try_write_str(&html_text, &outpath)
 }
@@ -54,7 +61,8 @@ pub(super) fn generate(
 fn make_html(
     summary: &[RunSummary],
     sources: &BTreeMap<PathBuf, String>,
-    results: &HashMap<DateTime<Utc>, DiffResults>,
+    current: &DiffResults,
+    prev: Option<&DiffResults>,
     repo_failures: &BTreeMap<String, String>,
     cache_dir: &Path,
     mode: args::RunMode,
@@ -84,18 +92,16 @@ fn make_html(
             (table_body)
         }
     };
-    let detailed_report = match summary {
-        [.., prev, current] => make_detailed_report(
-            results.get(&current.began).unwrap(),
-            results.get(&prev.began).unwrap(),
-            sources,
-            cache_dir,
-            mode,
-        ),
+    let detailed_report = match prev {
+        Some(prev) => make_detailed_report(current, prev, sources, cache_dir, mode),
+
         _ => html!(),
     };
 
     let weird_failures = format_repo_failures(repo_failures);
+    let added_and_removed = prev
+        .map(|prev| format_added_and_removed(prev, current))
+        .unwrap_or_default();
 
     let script = PreEscaped(
         "
@@ -148,6 +154,7 @@ fn make_html(
                     {a href = "#both-failures" { "both compilers" } }
                 }
                 (weird_failures)
+                (added_and_removed)
                 (detailed_report)
             }
         }
@@ -399,9 +406,8 @@ fn n_families_and_n_identical(run: &DiffResults) -> (usize, usize) {
     {
         // all families share a config; if no config, consider all sources
         // in a given repo to be a family.
-        let family = target
-            .config_path(Path::new(""))
-            .unwrap_or_else(|| target.repo_path().to_path_buf());
+        let family = target.config_path(Path::new(""));
+
         let (total, num_perfect) = family_stats.entry(family).or_insert((0, 0));
         *total += 1;
         *num_perfect += is_perfect as i32;
@@ -938,6 +944,53 @@ fn format_repo_failures(failures: &BTreeMap<String, String>) -> Markup {
                 }
             }
         }
+    }
+}
+
+fn format_added_and_removed(prev: &DiffResults, current: &DiffResults) -> Markup {
+    let all_prev = prev.targets().collect::<BTreeSet<_>>();
+    let all_current = current.targets().collect::<BTreeSet<_>>();
+
+    let added = all_current.difference(&all_prev).collect::<BTreeSet<_>>();
+    let removed = all_prev.difference(&all_current).collect::<BTreeSet<_>>();
+
+    let added_list = if !added.is_empty() {
+        html! {
+            h4 {"Added "(added.len()) " new targets"}
+            ul {
+                @for target in added {
+                    li {
+                        (target)
+
+                    }
+
+                }
+            }
+        }
+    } else {
+        Default::default()
+    };
+
+    let removed_list = if !removed.is_empty() {
+        html! {
+            h4 {"Lost "(removed.len()) " old targets"}
+            ul {
+                @for target in removed {
+                    li {
+                        (target)
+
+                    }
+
+                }
+            }
+        }
+    } else {
+        Default::default()
+    };
+
+    html! {
+        (added_list)
+        (removed_list)
     }
 }
 

@@ -150,10 +150,10 @@ impl MetaTableValues {
 
 /// master id => { (name or class, name or class) => adjustment }
 #[derive(Clone, Debug, Default, PartialEq, Hash)]
-pub struct Kerning(BTreeMap<String, BTreeMap<(String, String), OrderedFloat<f64>>>);
+pub struct Kerning(BTreeMap<String, BTreeMap<(SmolStr, SmolStr), OrderedFloat<f64>>>);
 
 impl Kerning {
-    pub fn get(&self, master_id: &str) -> Option<&BTreeMap<(String, String), OrderedFloat<f64>>> {
+    pub fn get(&self, master_id: &str) -> Option<&BTreeMap<(SmolStr, SmolStr), OrderedFloat<f64>>> {
         self.0.get(master_id)
     }
 
@@ -163,15 +163,15 @@ impl Kerning {
 
     pub fn iter(
         &self,
-    ) -> impl Iterator<Item = (&String, &BTreeMap<(String, String), OrderedFloat<f64>>)> {
+    ) -> impl Iterator<Item = (&String, &BTreeMap<(SmolStr, SmolStr), OrderedFloat<f64>>)> {
         self.0.iter()
     }
 
     fn insert(
         &mut self,
         master_id: String,
-        lhs_class_or_group: String,
-        rhs_class_or_group: String,
+        lhs_class_or_group: SmolStr,
+        rhs_class_or_group: SmolStr,
         kern: f64,
     ) {
         *self
@@ -205,7 +205,7 @@ impl FromPlist for Kerning {
                 if tokenizer.eat(b'}').is_ok() {
                     break;
                 }
-                let lhs_name_or_class: String = tokenizer.parse()?;
+                let lhs_name_or_class: SmolStr = tokenizer.parse()?;
                 tokenizer.eat(b'=')?;
                 tokenizer.eat(b'{')?;
 
@@ -215,7 +215,7 @@ impl FromPlist for Kerning {
                         break;
                     }
 
-                    let rhs_name_or_class: String = tokenizer.parse()?;
+                    let rhs_name_or_class: SmolStr = tokenizer.parse()?;
                     tokenizer.eat(b'=')?;
                     let value: f64 = tokenizer.parse()?;
                     tokenizer.eat(b';')?;
@@ -2994,30 +2994,25 @@ impl Font {
     pub fn load_from_string(data: &str) -> Result<Font, Error> {
         let raw_font = RawFont::load_from_string(data)?;
         let mut font = Font::try_from(raw_font)?;
-        if font.custom_parameters.propagate_anchors.unwrap_or(true) {
-            font.propagate_all_anchors();
-        }
-
-        // ensure that glyphs with components that have bracket layers
-        // also have bracket layers.
-        font.align_bracket_layers();
-
+        font.preprocess();
         Ok(font)
     }
 
     pub fn load(glyphs_file: &path::Path) -> Result<Font, Error> {
         let mut font = Self::load_raw(glyphs_file)?;
+        font.preprocess();
+        Ok(font)
+    }
 
-        // propagate anchors by default unless explicitly set to false
-        if font.custom_parameters.propagate_anchors.unwrap_or(true) {
-            font.propagate_all_anchors();
-        }
-
+    fn preprocess(&mut self) {
         // ensure that glyphs with components that have bracket layers
         // also have bracket layers.
-        font.align_bracket_layers();
+        self.align_bracket_layers();
 
-        Ok(font)
+        // propagate anchors by default unless explicitly set to false
+        if self.custom_parameters.propagate_anchors.unwrap_or(true) {
+            self.propagate_all_anchors();
+        }
     }
 
     /// if a glyph has components that have alternate layers, copy the layer
@@ -3184,6 +3179,7 @@ mod tests {
     use kurbo::{Affine, Point};
 
     use rstest::rstest;
+    use smol_str::ToSmolStr;
 
     fn testdata_dir() -> PathBuf {
         // working dir varies CLI vs VSCode
@@ -4077,7 +4073,7 @@ mod tests {
         let font = Font::load(&glyphs3_dir().join("KernFloats.glyphs")).unwrap();
 
         let kerns = font.kerning_ltr.get("m01").unwrap();
-        let key = ("space".to_string(), "space".to_string());
+        let key = ("space".to_smolstr(), "space".to_smolstr());
         assert_eq!(kerns.get(&key), Some(&OrderedFloat(4.2001)));
     }
 
