@@ -250,6 +250,10 @@ fn make_targets(cache_dir: &Path, repos: &[FontSource], mode: RunMode) -> Resolv
             Ok(config) => config,
             Err(e) => {
                 result.failures.insert(repo.repo_url.clone(), e.to_string());
+                log::warn!(
+                    "failed to load repo '{}': '{e}'",
+                    repo.repo_path(cache_dir).display()
+                );
                 continue;
             }
         };
@@ -257,38 +261,53 @@ fn make_targets(cache_dir: &Path, repos: &[FontSource], mode: RunMode) -> Resolv
             Ok(x) => x,
             Err(e) => {
                 result.failures.insert(repo.repo_url.clone(), e.to_string());
+                log::warn!("failed to load config {}", config_path.display());
                 continue;
             }
         };
-        let relative_config_path = config_path
-            .strip_prefix(cache_dir)
-            .expect("config always in cache dir");
-        let sources_dir = config_path
-            .parent()
-            .expect("config path always in sources dir");
-        // config is always in sources, sources is always in org/repo
-        let repo_dir = relative_config_path.parent().unwrap().parent().unwrap();
+        let repo_dir = repo.repo_path(Path::new(""));
+        // we store a map of repo_dir -> repo URL in sources.json
         result
             .source_repos
-            .insert(repo_dir.to_owned(), repo.repo_url.clone());
+            .insert(repo_dir.clone(), repo.repo_url.clone());
+
+        let sources_dir = if repo.config_is_external() {
+            // virtual config always assumes it is in a directory named 'sources'
+            repo.repo_path(cache_dir).join("sources")
+        } else {
+            // otherwise the config file is always in the source directory
+            config_path.parent().unwrap().to_owned()
+        };
+
+        let mut config_path = config_path
+            .strip_prefix(cache_dir)
+            .expect("always in cache dir");
+        if !repo.config_is_external() {
+            config_path = config_path
+                .strip_prefix(&repo_dir)
+                .expect("non-virtual config always in repo dir");
+        }
+
         for source in &config.sources {
             let src_path = sources_dir.join(source);
             if !src_path.exists() {
                 result
                     .failures
                     .insert(repo.repo_url.clone(), format!("missing source '{source}'"));
+                log::warn!("missing source '{}'", src_path.display());
                 continue;
             }
-            let src_path = src_path
-                .strip_prefix(cache_dir)
-                .expect("source is always in cache dir");
-            result.targets.extend(targets_for_source(
-                repo,
-                src_path,
-                relative_config_path,
-                &config,
-                mode
-            ))
+            let default = Target::new(
+                &repo_dir,
+                repo.git_rev(),
+                config_path,
+                repo.config_is_external(),
+                source,
+            );
+            let gftools = should_build_in_gftools_mode(&src_path, &config)
+                .then(|| default.to_gftools_target());
+            result.targets.push(default);
+            result.targets.extend(gftools);
         }
     }
 
@@ -308,58 +327,6 @@ fn preflight_all_repos(cache_dir: &Path, sources: &[FontSource]) {
         // we will handle errors later
         let _ignore = src.instantiate(cache_dir);
     });
-}
-
-fn targets_for_source(
-    source: &FontSource,
-    src_path: &Path,
-    config_path: &Path,
-    config: &Config,
-    mode: RunMode
-) -> Vec<Target> {
-    let sha = source.git_rev();
-
-    // `GlyphsApp` builds are mutually exclusive with the others.
-    let in_glyphs_app_mode = mode == RunMode::GlyphsApp;
-    let mut targets = Vec::with_capacity(if in_glyphs_app_mode { 1 } else { 2 });
-
-    if in_glyphs_app_mode {
-        if should_build_in_glyphs_app_mode(src_path) {
-            match Target::new(
-                src_path.to_owned(),
-                config_path.to_owned(),
-                sha.to_owned(),
-                BuildType::GlyphsApp,
-            ) {
-                Ok(t)  => targets.push(t),
-                Err(e) => log::warn!("failed to generate `GlyphsApp` target: {e}"),
-            }
-        }
-    } else {
-        match Target::new(
-            src_path.to_owned(),
-            config_path.to_owned(),
-            sha.to_owned(),
-            BuildType::Default,
-        ) {
-            Ok(t)  => targets.push(t),
-            Err(e) => log::warn!("failed to generate `Default` target: {e}"),
-        }
-    
-        if should_build_in_gftools_mode(src_path, config) {
-            match Target::new(
-                src_path.to_owned(),
-                config_path.to_owned(),
-                sha.to_owned(),
-                BuildType::GfTools,
-            ) {
-                Ok(t)  => targets.push(t),
-                Err(e) => log::warn!("failed to generate `GfTools` target: {e}"),
-            }
-        }
-    }
-
-    targets
 }
 
 fn should_build_in_gftools_mode(src_path: &Path, config: &Config) -> bool {
