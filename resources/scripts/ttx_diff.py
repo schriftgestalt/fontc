@@ -1803,9 +1803,9 @@ def main(argv):
     failure_2 = tool_2.run(build_dir, font_file_name_2)
     
     if failure_1 is not None:
-        failures[tool_1] = failure_1
+        failures[tool_1.tool_name] = failure_1
     if failure_2 is not None:
-        failures[tool_2] = failure_2
+        failures[tool_2.tool_name] = failure_2
 
     report_errors_and_exit_if_there_were_any(failures)
 

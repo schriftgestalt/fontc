@@ -28,12 +28,12 @@ pub(super) fn run_ttx_diff(ctx: &TtxContext, target: &Target) -> RunResult<DiffO
         .arg("--json")
         .arg("--compare").arg(compare)
         .arg("--outdir").arg(outdir)
-        .arg("--fontc_path").arg(&ctx.fontc_path)
+        .arg("--tool_2_path").arg(&ctx.fontc_path)
         .arg("--normalizer_path").arg(&ctx.normalizer_path);
     if target.build == BuildType::GlyphsApp {
         cmd.args(["--rebuild", "both"]);
     } else {
-        cmd.args(["--rebuild", "new_tool"]);
+        cmd.args(["--rebuild", "tool_2"]);
     }
     if target.build == BuildType::GfTools {
         cmd.arg("--config")
@@ -90,17 +90,17 @@ pub(super) fn run_ttx_diff(ctx: &TtxContext, target: &Target) -> RunResult<DiffO
         log::warn!("error running {target} '{err}'");
     }
 
-    if old_tool_finished(&result) {
+    if tool_1_finished(&result) {
         ctx.results_cache
             .save_built_files_to_cache(target, &build_dir);
     }
     result
 }
 
-fn old_tool_finished(result: &RunResult<DiffOutput, DiffError>) -> bool {
+fn tool_1_finished(result: &RunResult<DiffOutput, DiffError>) -> bool {
     match result {
         RunResult::Success(_) => true,
-        RunResult::Fail(DiffError::CompileFailed(diff)) => diff.old_tool.is_none(),
+        RunResult::Fail(DiffError::CompileFailed(diff)) => diff.tool_1.is_none(),
         RunResult::Fail(DiffError::Other(_)) => false,
     }
 }
@@ -118,10 +118,10 @@ pub(crate) struct Summary {
     pub(crate) total_targets: u32,
     pub(crate) identical: u32,
     pub(crate) produced_diff: u32,
-    #[serde(alias = "fontc_failed")] // Support reading of old JSON files.
-    pub(crate) new_tool_failed: u32,
     #[serde(alias = "fontmake_failed")] // Support reading of old JSON files.
-    pub(crate) old_tool_failed: u32,
+    pub(crate) tool_1_failed: u32,
+    #[serde(alias = "fontc_failed")] // Support reading of old JSON files.
+    pub(crate) tool_2_failed: u32,
     pub(crate) both_failed: u32,
     pub(crate) other_failure: u32,
     pub(crate) diff_perc_including_failures: f32,
@@ -154,15 +154,15 @@ impl Summary {
         let diff_perc_including_failures =
             non_nan(total_diff / (n_failed + success.len()) as f32) * 100.;
         let diff_perc_excluding_failures = non_nan(total_diff / success.len() as f32) * 100.;
-        let (mut new_tool_failed, mut old_tool_failed, mut both_failed, mut other_failure) =
+        let (mut tool_1_failed, mut tool_2_failed, mut both_failed, mut other_failure) =
             (0, 0, 0, 0);
         for fail in failure.values() {
             match fail {
-                DiffError::CompileFailed(err) if err.new_tool.is_some() && err.old_tool.is_some() => {
+                DiffError::CompileFailed(err) if err.tool_1.is_some() && err.tool_2.is_some() => {
                     both_failed += 1
                 }
-                DiffError::CompileFailed(err) if err.new_tool.is_some() => new_tool_failed += 1,
-                DiffError::CompileFailed(err) if err.old_tool.is_some() => old_tool_failed += 1,
+                DiffError::CompileFailed(err) if err.tool_1.is_some() => tool_1_failed += 1,
+                DiffError::CompileFailed(err) if err.tool_2.is_some() => tool_2_failed += 1,
                 DiffError::CompileFailed(_) => unreachable!(),
                 DiffError::Other(_) => other_failure += 1,
             }
@@ -172,8 +172,8 @@ impl Summary {
             total_targets,
             identical,
             produced_diff,
-            new_tool_failed,
-            old_tool_failed,
+            tool_1_failed,
+            tool_2_failed,
             both_failed,
             other_failure,
             diff_perc_including_failures,
@@ -256,9 +256,9 @@ pub(crate) enum DiffError {
 #[serde(rename_all = "snake_case")]
 pub(crate) struct CompileFailed {
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) new_tool: Option<CompilerFailure>,
+    pub(crate) tool_1: Option<CompilerFailure>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) old_tool: Option<CompilerFailure>,
+    pub(crate) tool_2: Option<CompilerFailure>,
 }
 
 /// Info regarding the failure of a single compiler
@@ -331,8 +331,8 @@ mod tests {
                 .collect();
             let result: RawDiffOutput = serde_json::from_str(s).unwrap();
             match result {
-                RawDiffOutput::Error(CompileFailed { new_tool, old_tool }) => {
-                    eprintln!("unexpected error: {new_tool:?} '{old_tool:?}'");
+                RawDiffOutput::Error(CompileFailed { tool_1, tool_2 }) => {
+                    eprintln!("unexpected error: {tool_1:?} '{tool_2:?}'");
                     false
                 }
                 RawDiffOutput::Success(items) if items == expected => true,
@@ -347,10 +347,10 @@ mod tests {
         assert!(expect_success(success, &[("GPOS", 0.9995f32)]));
         let success = "{\"success\": {}}";
         assert!(expect_success(success, &[]));
-        let error = "{\"error\": {\"old_tool\": {\"command\": \"fontmake -o variable --output-path fontmake.ttf\", \"stderr\": \"oh no\"}}}";
+        let error = "{\"error\": {\"tool_1\": {\"command\": \"fontmake -o variable --output-path fontmake.ttf\", \"stderr\": \"oh no\"}}}";
         let RawDiffOutput::Error(CompileFailed {
-            new_tool: None,
-            old_tool: Some(CompilerFailure { command, stderr }),
+            tool_1: Some(CompilerFailure { command, stderr }),
+            tool_2: None,
         }) = serde_json::from_str(error).unwrap()
         else {
             panic!("a quite unlikely success")

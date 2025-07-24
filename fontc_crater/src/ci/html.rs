@@ -571,9 +571,9 @@ fn make_target_description(target: &Target) -> Markup {
         BuildType::Default => "default".to_string(),
         BuildType::GfTools if target.config.file_stem() != Some(OsStr::new("config")) => {
             format!("gftools, {}", target.config.display())
-        }
-        _ => "gftools".to_string(),
+        },
         BuildType::GlyphsApp => "glyphsapp".to_string(),
+        _ => "gftools".to_string(),
     };
     html! {
         (source)

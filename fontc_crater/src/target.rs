@@ -9,9 +9,13 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
+use crate::args::DEFAULT_CACHE_DIR;
+
 static VIRTUAL_CONFIG_DIR: &str = "sources";
 
-use crate::args::DEFAULT_CACHE_DIR;
+fn default_cache_dir() -> PathBuf {
+    return Path::new(DEFAULT_CACHE_DIR).to_path_buf();
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) struct Target {
@@ -379,7 +383,7 @@ mod tests {
 
         let cache_dir = default_cache_dir();
         let hmm = target.config_path_stripping_disambiguating_sha_if_necessary(&cache_dir);
-        assert_eq!(hmm, format!("{DEFAULT_CACHE_DIR}/org/repo/sources/hmm.yaml"))
+        assert_eq!(hmm, format!("{DEFAULT_CACHE_DIR}/org/repo/Sources/hmm.yaml"))
     }
 
     #[test]

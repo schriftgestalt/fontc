@@ -137,7 +137,7 @@ fn run_crater_and_save_results(args: &CiArgs) -> Result<(), Error> {
         mut targets,
         source_repos,
         failures,
-    } = make_targets(&cache_dir, &inputs.sources, mode);
+    } = make_targets(&cache_dir, &inputs.sources);
 
     // If not in `GfTools` mode, keep only targets with `Default` build type.
     // If in `GlyphsApp` mode, keep only targets with `GlyphsApp` build type.
@@ -241,7 +241,7 @@ impl ResolvedTargets {
     }
 }
 
-fn make_targets(cache_dir: &Path, repos: &[FontSource], mode: RunMode) -> ResolvedTargets {
+fn make_targets(cache_dir: &Path, repos: &[FontSource]) -> ResolvedTargets {
     // first instantiate every repo in parallel:
     preflight_all_repos(cache_dir, repos);
     let mut result = ResolvedTargets::default();
@@ -353,16 +353,6 @@ fn should_build_in_gftools_mode(src_path: &Path, config: &Config) -> bool {
         .as_ref()
         .filter(|provider| *provider != "googlefonts")
         .is_none()
-}
-
-fn should_build_in_glyphs_app_mode(src_path: &Path) -> bool {
-    let extension = src_path
-        .extension()
-        .map(|s| s.to_string_lossy())
-        .unwrap_or_default();
-
-    // Accept only `.glyphs` and `.glyphspackage` files.
-    extension.to_lowercase().starts_with("glyphs")
 }
 
 fn format_elapsed_time<Tmz: TimeZone>(start: &DateTime<Tmz>, end: &DateTime<Tmz>) -> String {
