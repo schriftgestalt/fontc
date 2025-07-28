@@ -1541,13 +1541,13 @@ class Tool(ABC):
     # Subclasses should return their specific tool type.
     @property
     @abstractmethod
-    def tool_type(self) -> ToolType:
+    def type(self) -> ToolType:
         pass
 
     # Subclasses may override the tool name, e. g. by appending a version.
     @property
-    def tool_name(self) -> str:
-        return self.tool_type
+    def name(self) -> str:
+        return self.type
 
     # Subclasses may override the font file extension.
     @property
@@ -1586,7 +1586,7 @@ class FontcTool(Tool):
 
     def __post_init__(self):
         self._fontc_bin = get_crate_path(self.fontc_path, self.root, FONTC_NAME)
-        assert self._fontc_bin.is_file(), f"fontc path '{fontc_bin}' does not exist"
+        assert self._fontc_bin.is_file(), f"fontc path '{self._fontc_bin}' does not exist"
 
     # Created once, read-only.
     @property
@@ -1598,7 +1598,7 @@ class FontcTool(Tool):
 class StandaloneFontcTool(FontcTool):
 
     @property
-    def tool_type(self) -> ToolType:
+    def type(self) -> ToolType:
         return ToolType.FONTC
 
     def build_action(self, build_dir: Path, font_file_name: str = None) -> Callable[[], None]:
@@ -1611,7 +1611,7 @@ class StandaloneFontcTool(FontcTool):
 class GfToolsFontcTool(FontcTool):
 
     @property
-    def tool_type(self) -> ToolType:
+    def type(self) -> ToolType:
         return ToolType.FONTC_GFTOOLS
 
     def build_action(self, build_dir: Path, font_file_name: str = None) -> Callable[[], None]:
@@ -1624,7 +1624,7 @@ class GfToolsFontcTool(FontcTool):
 class StandaloneFontmakeTool(Tool):
 
     @property
-    def tool_type(self) -> ToolType:
+    def type(self) -> ToolType:
         return ToolType.FONTMAKE
 
     def build_action(self, build_dir: Path, font_file_name: str = None) -> Callable[[], None]:
@@ -1637,7 +1637,7 @@ class StandaloneFontmakeTool(Tool):
 class GfToolsFontmakeTool(Tool):
 
     @property
-    def tool_type(self) -> ToolType:
+    def type(self) -> ToolType:
         return ToolType.FONTMAKE_GFTOOLS
 
     def build_action(self, build_dir: Path, font_file_name: str = None) -> Callable[[], None]:
@@ -1662,13 +1662,13 @@ class GlyphsAppTool(Tool):
             sys.exit("No JSTalk connection to Glyphs app at {self.bundle_path}")
 
     @property
-    def tool_type(self) -> ToolType:
+    def type(self) -> ToolType:
         return ToolType.GLYPHSAPP
 
     @property
-    def tool_name(self) -> str:
+    def name(self) -> str:
         underscored_version = self._version.replace(".", "_")
-        return f"{self.tool_type}_{underscored_version}_{self._build_number}"
+        return f"{self.type}_{underscored_version}_{self._build_number}"
 
     @property
     def font_file_extension(self) -> str:
@@ -1775,8 +1775,8 @@ def main(argv):
     if tool_1 is None or tool_2 is None:
         sys.exit("Failed to configure one or both tools")
 
-    tool_1_name = tool_1.tool_name
-    tool_2_name = tool_2.tool_name
+    tool_1_name = tool_1.name
+    tool_2_name = tool_2.name
 
     build_dir = out_dir / f"{tool_1_name}_{tool_2_name}"
     build_dir.mkdir(parents=True, exist_ok=True)
