@@ -28,12 +28,12 @@ pub(super) fn run_ttx_diff(ctx: &TtxContext, target: &Target) -> RunResult<DiffO
         .arg("--json")
         .arg("--compare").arg(compare)
         .arg("--outdir").arg(outdir)
-        .arg("--tool_2_path").arg(&ctx.fontc_path)
+        .arg("--tool_1_path").arg(&ctx.fontc_path)
         .arg("--normalizer_path").arg(&ctx.normalizer_path);
     if target.build == BuildType::GlyphsApp {
         cmd.args(["--rebuild", "both"]);
     } else {
-        cmd.args(["--rebuild", "tool_2"]);
+        cmd.args(["--rebuild", "tool_1"]);
     }
     if target.build == BuildType::GfTools {
         cmd.arg("--config")
@@ -90,17 +90,17 @@ pub(super) fn run_ttx_diff(ctx: &TtxContext, target: &Target) -> RunResult<DiffO
         log::warn!("error running {target} '{err}'");
     }
 
-    if tool_1_finished(&result) {
+    if tool_2_finished(&result) {
         ctx.results_cache
             .save_built_files_to_cache(target, &build_dir);
     }
     result
 }
 
-fn tool_1_finished(result: &RunResult<DiffOutput, DiffError>) -> bool {
+fn tool_2_finished(result: &RunResult<DiffOutput, DiffError>) -> bool {
     match result {
         RunResult::Success(_) => true,
-        RunResult::Fail(DiffError::CompileFailed(diff)) => diff.tool_1.is_none(),
+        RunResult::Fail(DiffError::CompileFailed(diff)) => diff.tool_2.is_none(),
         RunResult::Fail(DiffError::Other(_)) => false,
     }
 }
@@ -118,9 +118,9 @@ pub(crate) struct Summary {
     pub(crate) total_targets: u32,
     pub(crate) identical: u32,
     pub(crate) produced_diff: u32,
-    #[serde(alias = "fontmake_failed")] // Support reading of old JSON files.
-    pub(crate) tool_1_failed: u32,
     #[serde(alias = "fontc_failed")] // Support reading of old JSON files.
+    pub(crate) tool_1_failed: u32,
+    #[serde(alias = "fontmake_failed")] // Support reading of old JSON files.
     pub(crate) tool_2_failed: u32,
     pub(crate) both_failed: u32,
     pub(crate) other_failure: u32,
@@ -347,10 +347,10 @@ mod tests {
         assert!(expect_success(success, &[("GPOS", 0.9995f32)]));
         let success = "{\"success\": {}}";
         assert!(expect_success(success, &[]));
-        let error = "{\"error\": {\"tool_1\": {\"command\": \"fontmake -o variable --output-path fontmake.ttf\", \"stderr\": \"oh no\"}}}";
+        let error = "{\"error\": {\"tool_2\": {\"command\": \"fontmake -o variable --output-path fontmake.ttf\", \"stderr\": \"oh no\"}}}";
         let RawDiffOutput::Error(CompileFailed {
-            tool_1: Some(CompilerFailure { command, stderr }),
-            tool_2: None,
+            tool_1: None,
+            tool_2: Some(CompilerFailure { command, stderr }),
         }) = serde_json::from_str(error).unwrap()
         else {
             panic!("a quite unlikely success")
