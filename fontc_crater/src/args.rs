@@ -24,8 +24,8 @@ pub(super) enum Commands {
 #[derive(Clone, Copy, Debug, PartialEq, ValueEnum)]
 #[value(rename_all = "lower")]
 pub(super) enum RunMode {
-    /// Run the default tools (`fontc` and `fontmake` directly), plus `fontc`
-    /// and `fontmake` via `gftools`.
+    /// Run the default tools (`fontmake` and `fontc` directly), plus `fontmake`
+    /// and `fontc` via `gftools`.
     GfTools,
     
     /// Run only the default tools (reduces target count when running locally).

@@ -10,7 +10,7 @@ way to do this is probably with `pyenv` and its `pyenv-virtualenv` plugin (see
 https://github.com/pyenv/pyenv-virtualenv).
 
 Usage:
-    # Rebuild with `fontmake` and `fontc` and compare.
+    # Rebuild with `fontc` and `fontmake` and compare.
     python resources/scripts/ttx_diff.py --compare default ../OswaldFont/sources/Oswald.glyphs
 
     # Rebuild the `fontc` copy, reuse the prior `fontmake` copy (if present), 
@@ -18,7 +18,7 @@ Usage:
     # the diff.
     python resources/scripts/ttx_diff.py --compare default --rebuild fontc ../OswaldFont/sources/Oswald.glyphs
 
-    # Rebuild with `fontmake` and `fontc` (managed by `gftools`) and compare.
+    # Rebuild with `fontc` and `fontmake` (managed by `gftools`) and compare.
     # This requires a config file.
     python resources/scripts/ttx_diff.py --compare gftools --config ../OswaldFont/sources/config.yaml ../OswaldFont/sources/Oswald.glyphs
 
@@ -138,7 +138,7 @@ flags.DEFINE_enum_class(
     "compare",
     default = Compare.UNSET,
     enum_class = Compare,
-    help = "Compare results using either a default build, a build managed by `gftools`, or two versions of the Glyphs app.\nThese are presets for specific `tool_1_type` and `tool_2_type` combinations. `default` sets tool 1 to `fontmake` and tool 2 to `fontc`; `gftools` sets tool 1 to `fontmake_gftools` and tool 2 to `fontc_gftools`.\nNote that as of 2023-05-21 we still sets flags for `fontmake` to match `fontc` behavior.",
+    help = "Compare results using either a default build, a build managed by `gftools`, or two versions of the Glyphs app.\nThese are presets for specific `tool_1_type` and `tool_2_type` combinations. `default` sets tool 1 to `fontc` and tool 2 to `fontmake` to match the previous configuration; `gftools` sets tool 1 to `fontc_gftools` and tool 2 to `fontmake_gftools`.\nNote that as of 2023-05-21 we still sets flags for `fontmake` to match `fontc` behavior.",
 )
 flags.DEFINE_enum_class(
     "tool_1_type",
@@ -1703,11 +1703,11 @@ def main(argv):
     if tool_1_type == ToolType.UNSET or tool_2_type == ToolType.UNSET:
         compare = FLAGS.compare
         if compare == Compare.DEFAULT:
-            tool_1_type = ToolType.FONTMAKE
-            tool_2_type = ToolType.FONTC
+            tool_1_type = ToolType.FONTC
+            tool_2_type = ToolType.FONTMAKE
         elif compare == Compare.GFTOOLS:
-            tool_1_type = ToolType.FONTMAKE_GFTOOLS
-            tool_2_type = ToolType.FONTC_GFTOOLS
+            tool_1_type = ToolType.FONTC_GFTOOLS
+            tool_2_type = ToolType.FONTMAKE_GFTOOLS
         elif compare == Compare.GLYPHSAPP:
             tool_1_type = ToolType.GLYPHSAPP
             tool_2_type = ToolType.GLYPHSAPP
