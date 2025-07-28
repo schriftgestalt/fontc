@@ -1697,6 +1697,20 @@ def main(argv):
     if root.name != FONTC_NAME:
         sys.exit("Expected to be at the root of fontc")
 
+    if shutil.which(FONTMAKE_NAME) is None:
+        sys.exit("No fontmake")
+    if shutil.which(TTX_NAME) is None:
+        sys.exit("No ttx")
+
+    otl_bin = get_crate_path(FLAGS.normalizer_path, root, "otl-normalizer")
+    assert otl_bin.is_file(), f"normalizer path '{otl_bin}' does not exist"
+
+    # Configure output directory.
+    out_dir = root / "build"
+    if FLAGS.outdir is not None:
+        out_dir = Path(FLAGS.outdir).expanduser().resolve()
+        assert out_dir.exists(), f"output directory {out_dir} does not exist"
+
     # Set `tool_1_type` and `tool_2_type` from `compare` flag if one or both were not set.
     tool_1_type = FLAGS.tool_1_type
     tool_2_type = FLAGS.tool_2_type
@@ -1732,20 +1746,6 @@ def main(argv):
         version_2, build_number_2 = app_bundle_version(FLAGS.tool_2_path)
         if version_1 == version_2 and build_number_1 == build_number_2:
             sys.exit("Must specify two different Glyphs app builds")
-
-    otl_bin = get_crate_path(FLAGS.normalizer_path, root, "otl-normalizer")
-    assert otl_bin.is_file(), f"normalizer path '{otl_bin}' does not exist"
-
-    if shutil.which(FONTMAKE_NAME) is None:
-        sys.exit("No fontmake")
-    if shutil.which(TTX_NAME) is None:
-        sys.exit("No ttx")
-
-    # Configure output files.
-    out_dir = root / "build"
-    if FLAGS.outdir is not None:
-        out_dir = Path(FLAGS.outdir).expanduser().resolve()
-        assert out_dir.exists(), f"output directory {out_dir} does not exist"
 
     # Configure tools.
     tool_1 = None;
