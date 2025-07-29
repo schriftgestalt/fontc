@@ -84,18 +84,10 @@ from typing import Any, Callable, Dict, Generator, List, Optional, Sequence, Tup
 from urllib.parse import urlparse
 
 
-class Compare(IntEnum):
-    UNSET = 0
-    DEFAULT = 1
-    GFTOOLS = 2
-    GLYPHSAPP = 3
-
 # Since `absl` flags do not support overriding the generated flag names, the
 # string values should match the lowercase versions of the constants (i. e.
 # include the same underscores).
 class ToolType(StrEnum):
-    UNSET = "unset"
-
     # Standalone versions
     FONTC = "fontc"
     FONTMAKE = "fontmake"
@@ -135,14 +127,8 @@ def eprint(*objects):
 
 
 flags.DEFINE_enum_class(
-    "compare",
-    default = Compare.UNSET,
-    enum_class = Compare,
-    help = "Compare results using either a default build, a build managed by `gftools`, or two versions of the Glyphs app.\nThese are presets for specific `tool_1_type` and `tool_2_type` combinations. `default` sets tool 1 to `fontc` and tool 2 to `fontmake` to match the previous configuration; `gftools` sets tool 1 to `fontc_gftools` and tool 2 to `fontmake_gftools`.\nNote that as of 2023-05-21 we still sets flags for `fontmake` to match `fontc` behavior.",
-)
-flags.DEFINE_enum_class(
     "tool_1_type",
-    default = ToolType.UNSET,
+    default = None,
     enum_class = ToolType,
     help = "Choose the type of the first tool which should be used to build fonts to compare. Note that as of 2023-05-21, we still set flags for `fontmake` to match `fontc` behavior.",
 )
@@ -153,7 +139,7 @@ flags.DEFINE_string(
 )
 flags.DEFINE_enum_class(
     "tool_2_type",
-    default = ToolType.UNSET,
+    default = None,
     enum_class = ToolType,
     help = "Choose the type of the second tool which should be used to build fonts to compare. Note that as of 2023-05-21, we still set flags for `fontmake` to match `fontc` behavior.",
 )
@@ -1711,23 +1697,17 @@ def main(argv):
         out_dir = Path(FLAGS.outdir).expanduser().resolve()
         assert out_dir.exists(), f"output directory {out_dir} does not exist"
 
-    # Set `tool_1_type` and `tool_2_type` from `compare` flag if one or both were not set.
+    # Configure tools.
     tool_1_type = FLAGS.tool_1_type
     tool_2_type = FLAGS.tool_2_type
-    if tool_1_type == ToolType.UNSET or tool_2_type == ToolType.UNSET:
-        compare = FLAGS.compare
-        if compare == Compare.DEFAULT:
-            tool_1_type = ToolType.FONTC
-            tool_2_type = ToolType.FONTMAKE
-        elif compare == Compare.GFTOOLS:
-            tool_1_type = ToolType.FONTC_GFTOOLS
-            tool_2_type = ToolType.FONTMAKE_GFTOOLS
-        elif compare == Compare.GLYPHSAPP:
-            tool_1_type = ToolType.GLYPHSAPP
-            tool_2_type = ToolType.GLYPHSAPP
-        else:
-            # `compare` is either not set or an unsupported value.
-            sys.exit("Must specify two tools or a compare mode")
+    if tool_1_type is None or tool_2_type is None:
+        sys.exit("Must specify two tools")
+
+    # If any of the tools is managed by GFTools, we need to have a config file.
+    gftools_tool_types = (ToolType.FONTC_GFTOOLS, ToolType.FONTMAKE_GFTOOLS)
+    if tool_1_type in gftools_tool_types or tool_2_type in gftools_tool_types:
+        if FLAGS.config is None:
+            sys.exit("Must specify a config file for GFTools")
 
     # Ensure that required Glyphs app bundle paths are set.
     if tool_1_type == ToolType.GLYPHSAPP and FLAGS.tool_1_path is None:
@@ -1747,7 +1727,6 @@ def main(argv):
         if version_1 == version_2 and build_number_1 == build_number_2:
             sys.exit("Must specify two different Glyphs app builds")
 
-    # Configure tools.
     tool_1 = None;
     if tool_1_type == ToolType.FONTC:
         tool_1 = StandaloneFontcTool(source, root, FLAGS.tool_1_path)
@@ -1803,9 +1782,9 @@ def main(argv):
     failure_2 = tool_2.run(build_dir, font_file_name_2)
     
     if failure_1 is not None:
-        failures[tool_1.tool_name] = failure_1
+        failures[tool_1_name] = failure_1
     if failure_2 is not None:
-        failures[tool_2.tool_name] = failure_2
+        failures[tool_2_name] = failure_2
 
     report_errors_and_exit_if_there_were_any(failures)
 
