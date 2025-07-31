@@ -1306,7 +1306,9 @@ def generate_output(
         map_1[LIG_CARET_NAME] = gdef_1
     if len(gdef_2):
         map_2[LIG_CARET_NAME] = gdef_2
-    result = {tool_1_name: map_1, tool_2_name: map_2}
+    
+    # Use generic tool names as JSON keys.
+    result = {TOOL_1_NAME: map_1, TOOL_2_NAME: map_2}
     if len(size_diffs) > 0:
         result["sizes"] = size_diffs
 
@@ -1319,8 +1321,8 @@ def print_output(
     tool_1_name: str,
     tool_2_name: str
 ):
-    map_1 = output[tool_1_name]
-    map_2 = output[tool_2_name]
+    map_1 = output[TOOL_1_NAME]
+    map_2 = output[TOOL_2_NAME]
     print("COMPARISON")
     t1 = set(map_1.keys())
     t2 = set(map_2.keys())
@@ -1351,11 +1353,9 @@ def print_output(
 
 def jsonify_output(
     output: dict[str, dict[str, Any]],
-    tool_1_name: str,
-    tool_2_name: str
 ):
-    map_1 = output[tool_1_name]
-    map_2 = output[tool_2_name]
+    map_1 = output[TOOL_1_NAME]
+    map_2 = output[TOOL_2_NAME]
     sizes = output.get("sizes", {})
     all_tags = set(map_1.keys()) | set(map_2.keys())
     out = dict()
@@ -1364,10 +1364,10 @@ def jsonify_output(
     for tag in all_tags:
         if tag not in map_1:
             different_lines += len(map_2[tag])
-            out[tag] = tool_2_name
+            out[tag] = TOOL_2_NAME
         elif tag not in map_2:
             different_lines += len(map_1[tag])
-            out[tag] = tool_1_name
+            out[tag] = TOOL_1_NAME
         else:
             s1 = map_1[tag]
             s2 = map_2[tag]
@@ -1754,6 +1754,7 @@ def main(argv):
     if tool_1 is None or tool_2 is None:
         sys.exit("Failed to configure one or both tools")
 
+    # Concrete tool names are used for file names and in log messages.
     tool_1_name = tool_1.name
     tool_2_name = tool_2.name
 
@@ -1782,9 +1783,9 @@ def main(argv):
     failure_2 = tool_2.run(build_dir, font_file_name_2)
     
     if failure_1 is not None:
-        failures[tool_1_name] = failure_1
+        failures[TOOL_1_NAME] = failure_1
     if failure_2 is not None:
-        failures[tool_2_name] = failure_2
+        failures[TOOL_2_NAME] = failure_2
 
     report_errors_and_exit_if_there_were_any(failures)
 
@@ -1804,14 +1805,14 @@ def main(argv):
     )
 
     diffs = False
-    if output[tool_1_name] == output[tool_2_name]:
+    if output[TOOL_1_NAME] == output[TOOL_2_NAME]:
         eprint("output is identical")
     else:
         diffs = True
         if not FLAGS.json:
             print_output(build_dir, output, tool_1_name, tool_2_name)
         else:
-            output = jsonify_output(output, tool_1_name, tool_2_name)
+            output = jsonify_output(output)
             print_json(output)
 
     sys.exit(diffs * 2)  # 0 or 2
