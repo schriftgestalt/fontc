@@ -9,12 +9,17 @@ use std::{
 };
 
 use crate::{
-    args,
+    ci::RunConfiguration,
+    tool::{
+        Tool, 
+        ToolType,
+        ToolManagement,
+    },
     error::Error,
+    Target,
     ttx_diff_runner::{CompilerFailure, DiffError, DiffOutput, DiffValue},
-    BuildType, Target,
 };
-use crate::ci::RunMode;
+
 use maud::{html, Markup, PreEscaped};
 
 use super::{DiffResults, RunSummary};
@@ -26,7 +31,7 @@ const TOOL_2_NAME: &str = "tool_2";
 pub(super) fn generate(
     target_dir: &Path,
     cache_dir: &Path,
-    mode: args::RunMode,
+    run_configuration: &RunConfiguration,
 ) -> Result<(), Error> {
     let summary_path = target_dir.join(super::SUMMARY_FILE);
     let summary: Vec<RunSummary> = crate::try_read_json(&summary_path)?;
@@ -53,7 +58,7 @@ pub(super) fn generate(
         [] => panic!("can't make html with no data"),
     };
 
-    let html_text = make_html(&summary, &sources, &current, prev.as_ref(), &failures, cache_dir, mode)?;
+    let html_text = make_html(&summary, &sources, &current, prev.as_ref(), &failures, cache_dir, run_configuration)?;
     let outpath = target_dir.join(HTML_FILE);
     crate::try_write_str(&html_text, &outpath)
 }
@@ -65,13 +70,17 @@ fn make_html(
     prev: Option<&DiffResults>,
     repo_failures: &BTreeMap<String, String>,
     cache_dir: &Path,
-    mode: args::RunMode,
+    run_configuration: &RunConfiguration,
 ) -> Result<String, Error> {
-    let tool_1_name = tool_name(mode, true);
-    let tool_2_name = tool_name(mode, false);
-    let tool_1_head = format!("{tool_1_name} 💥");
-    let tool_2_head = format!("{tool_2_name} 💥");
-    let introduction = make_introduction(mode);
+    let tool_1_category_name = run_configuration.tool_1_category_name();
+    let tool_2_category_name = run_configuration.tool_2_category_name();
+    let tool_1_head = format!("{tool_1_category_name} 💥");
+    let tool_2_head = format!("{tool_2_category_name} 💥");
+
+    let tool_1_category_type = run_configuration.tool_1_category_type();
+    let tool_2_category_type = run_configuration.tool_2_category_type();
+    let introduction = make_introduction(&tool_1_category_type, &tool_2_category_type);
+
     let table_body = make_table_body(summary);
     let css = include_str!("../../resources/style.css");
     let table = html! {
@@ -93,7 +102,7 @@ fn make_html(
         }
     };
     let detailed_report = match prev {
-        Some(prev) => make_detailed_report(current, prev, sources, cache_dir, mode),
+        Some(prev) => make_detailed_report(current, prev, sources, cache_dir, &tool_1_category_name, &tool_2_category_name),
 
         _ => html!(),
     };
@@ -124,8 +133,8 @@ fn make_html(
     ",
     );
 
-    let tool_1_link_title = format!("{tool_1_name} only");
-    let tool_2_link_title = format!("{tool_2_name} only");
+    let tool_1_link_title = format!("{tool_1_category_name} only");
+    let tool_2_link_title = format!("{tool_2_category_name} only");
     let raw_html = html! {
         (maud::DOCTYPE)
         html {
@@ -163,17 +172,6 @@ fn make_html(
     tidy_html(&raw_html)
 }
 
-fn tool_name(mode: args::RunMode, is_tool_1: bool) -> String {
-    let name;
-    if mode == RunMode::GlyphsApp {
-        name = if is_tool_1 { "Glyphs 3" } else { "Glyphs 4" };
-    } else {
-        name = if is_tool_1 { "fontmake" } else { "fontc" };
-    }
-    
-    name.to_string()
-}
-
 fn tidy_html(raw_html: &str) -> Result<String, Error> {
     let opts = tidier::FormatOptions {
         // indent with tabs to reduce file size.
@@ -188,22 +186,23 @@ fn tidy_html(raw_html: &str) -> Result<String, Error> {
     tidier::format(raw_html, false, &opts).map_err(Into::into)
 }
 
-fn make_introduction(mode: args::RunMode) -> Markup {
-    if mode == RunMode::GlyphsApp {
+fn make_introduction(tool_1_category_type: &ToolType, tool_2_category_type: &ToolType) -> Markup {
+    if tool_1_category_type == tool_2_category_type {
+        let tool_name = tool_1_category_type.name();
         return html! {
-            "Compiling all known Google Fonts that have `.glyphs` or "
-            "`.glyphspackage` sources with version 3 and version 4 of " 
-            {a href = "https://glyphsapp.com" { "Glyphs app" } }
+            "Compiling all known Google Fonts that have compatible sources with two builds of "
+            {a href = (tool_1_category_type.url()) { (tool_name) }}
             ", comparing the results."
-        }
-    } else {
-        return html! {
-            "Compiling all known Google Fonts that have sources with both "
-            {a href = "https://github.com/googlefonts/fontc" { "fontc" } }
-            " and "
-            {a href = "https://github.com/googlefonts/fontmake" { "fontmake" } }
-            ", comparing the results."
-        }
+        };
+    }
+    
+    // We have two different tool types.
+    html! {
+        "Compiling all known Google Fonts that have compatible sources with "
+        {a href = (tool_1_category_type.url()) { (tool_1_category_type.name()) }}
+        " and "
+        {a href = (tool_2_category_type.url()) { (tool_2_category_type.name()) }}
+        ", comparing the results."
     }
 }
 
@@ -346,21 +345,27 @@ fn make_detailed_report(
     prev: &DiffResults,
     sources: &BTreeMap<PathBuf, String>,
     cache_dir: &Path,
-    mode: args::RunMode,
+    tool_1_category_name: &str,
+    tool_2_category_name: &str,
 ) -> Markup {
-    let tool_1_name = tool_name(mode, true);
-    let tool_2_name = tool_name(mode, false);
     let reports = vec![
         make_diff_report(
             current,
             prev,
             sources,
             cache_dir,
-            &tool_1_name,
-            &tool_2_name,
+            tool_1_category_name,
+            tool_2_category_name,
         ),
         make_summary_report(current),
-        make_error_report(current, prev, sources, cache_dir, mode),
+        make_error_report(
+            current, 
+            prev, 
+            sources, 
+            cache_dir, 
+            tool_1_category_name, 
+            tool_2_category_name
+        ),
     ];
     html! {
         @for report in reports {
@@ -471,8 +476,8 @@ fn make_diff_report(
     prev: &DiffResults,
     sources: &BTreeMap<PathBuf, String>,
     cache_dir: &Path,
-    tool_1_name: &str,
-    tool_2_name: &str,
+    tool_1_category_name: &str,
+    tool_2_category_name: &str,
 ) -> Markup {
     fn get_total_diff_ratios(results: &DiffResults) -> BTreeMap<&Target, f32> {
         results
@@ -522,8 +527,9 @@ fn make_diff_report(
         let onclick = format!("event.preventDefault(); copyText(\"{ttx_command}\");");
         let decoration = make_delta_decoration(*ratio, prev_ratio, More::IsBetter);
         let changed_tag_list = list_different_tables(diff_details).unwrap_or_default();
+
         let diff_table =
-            format_diff_report_detail_table(diff_details, prev_details, tool_1_name, tool_2_name);
+            format_diff_report_detail_table(diff_details, prev_details, tool_1_category_name, tool_2_category_name);
 
         let details = html! {
             div.diff_info {
@@ -567,18 +573,24 @@ fn make_diff_report(
 fn make_target_description(target: &Target) -> Markup {
     let bare_path = target.source_path(Path::new(""));
     let source = bare_path.file_name().unwrap().to_str().unwrap();
-    let annotation = match target.build {
-        BuildType::Default => "default".to_string(),
-        BuildType::GfTools if target.config.file_stem() != Some(OsStr::new("config")) => {
-            format!("gftools, {}", target.config.display())
-        },
-        BuildType::GlyphsApp => "glyphsapp".to_string(),
-        _ => "gftools".to_string(),
-    };
+    let annotation = format!("{} + {}", 
+        annotation_for_tool(&target.tool_1(), target), 
+        annotation_for_tool(&target.tool_2(), target));
     html! {
         (source)
             " "
             em { "(" (annotation) ")" }
+    }
+}
+
+fn annotation_for_tool(tool: &Tool, target: &Target) -> String {
+    let name = tool.versioned_name();
+
+    match tool.tool_management() {
+        ToolManagement::ManagedByGfTools if target.config.file_stem() != Some(OsStr::new("config"))=> {
+            format!("{}, {}", name, target.config.display())
+        },
+        _ => name.to_string(),
     }
 }
 
@@ -587,8 +599,10 @@ fn make_error_report(
     prev: &DiffResults,
     sources: &BTreeMap<PathBuf, String>,
     cache_dir: &Path,
-    mode: args::RunMode,
+    tool_1_category_name: &str,
+    tool_2_category_name: &str,
 ) -> Markup {
+    // Generic tool names are used for JSON keys.
     let current_tool_1 = get_compiler_failures(current, TOOL_1_NAME);
     let prev_tool_1 = get_compiler_failures(prev, TOOL_1_NAME);
     let current_tool_2 = get_compiler_failures(current, TOOL_2_NAME);
@@ -608,12 +622,9 @@ fn make_error_report(
     let current_other = get_other_failures(current);
     let prev_other = get_other_failures(prev);
     
-    let tool_1_name = tool_name(mode, true);
-    let tool_2_name = tool_name(mode, false);
-
     let tool_1 = if current_tool_1.len() - current_both.len() > 0 {
         make_error_report_group(
-            tool_1_name.as_str(),
+            tool_1_category_name.as_ref(),
             "new-tool",
             current_tool_1
                 .keys()
@@ -636,7 +647,7 @@ fn make_error_report(
 
     let tool_2 = if current_tool_2.len() - current_both.len() > 0 {
         make_error_report_group(
-            tool_2_name.as_str(),
+            tool_2_category_name.as_ref(),
             "old-tool",
             current_tool_2
                 .keys()
@@ -678,9 +689,9 @@ fn make_error_report(
                     .unwrap_or_default();
 
                 html! {
-                    .h5 { (tool_1_name) }
+                    .h5 { (tool_1_category_name) }
                     (tool_1_err)
-                    .h5 { (tool_2_name) }
+                    .h5 { (tool_2_category_name) }
                     (tool_2_err)
                 }
             },
@@ -747,8 +758,8 @@ fn list_different_tables(current: &DiffOutput) -> Option<String> {
 fn format_diff_report_detail_table(
     current: &DiffOutput,
     prev: Option<&DiffOutput>,
-    tool_1_name: &str,
-    tool_2_name: &str,
+    tool_1_category_name: &str,
+    tool_2_category_name: &str,
 ) -> Markup {
     let value_decoration = |table: &str, value: DiffValue| -> Markup {
         let prev_value = match prev {
@@ -842,9 +853,9 @@ fn format_diff_report_detail_table(
                                         // Replace generic `tool_1`/`tool_2`
                                         // string with actual tool name.
                                         @if compiler == TOOL_1_NAME {
-                                            (tool_1_name) " only"
+                                            (tool_1_category_name) " only"
                                         } @else {
-                                            (tool_2_name) " only"
+                                            (tool_2_category_name) " only"
                                         }
                                     }
                                 }
@@ -1001,6 +1012,7 @@ fn get_compiler_failures<'a>(
             return None;
         };
         match compiler {
+            // Generic tool names are used for JSON keys.
             TOOL_1_NAME => compfail.tool_1.as_ref(),
             TOOL_2_NAME => compfail.tool_2.as_ref(),
             _ => panic!("this is quite unexpected"),
