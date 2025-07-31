@@ -315,7 +315,7 @@ fn make_targets(
                     repo.git_rev(),
                     config_path,
                     repo.config_is_external(),
-                    &src_path,
+                    source,
                     target_pair.clone(),
                 );
                 result.targets.push(target);

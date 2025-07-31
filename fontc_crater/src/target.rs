@@ -155,8 +155,6 @@ impl Target {
     }
 
     pub(crate) fn repro_command(&self, repo_url: &str, cache_dir: &Path) -> String {
-        return "((TO BE ADDED))".to_string();
-
         let repo_url = repo_url.trim();
         let source_path = self.source_path(Path::new(""));
         let rel_source_path = source_path
