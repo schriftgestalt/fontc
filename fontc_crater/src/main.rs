@@ -15,6 +15,7 @@ mod args;
 mod ci;
 mod error;
 mod target;
+mod tool;
 mod ttx_diff_runner;
 
 use serde::{de::DeserializeOwned, Serialize};
