@@ -51,7 +51,7 @@ pub(super) enum Preset {
     /// Run only the default tools (reduces target count when running locally).
     Default,
     
-    /// Run two Glyphs app versions. Requires `tool_1_path` and `tool_2_path`
+    /// Run two Glyphs app versions. Requires `--tool-1-path` and `--tool-2-path`
     /// to be set.
     GlyphsApp,
 }
@@ -90,9 +90,9 @@ pub(super) struct CiArgs {
     /// `fontmake_gftools` and `fontc_gftools`.
     ///
     /// `glyphsapp` sets both tools to an instance of the Glyphs app, requiring
-    /// their app bundles to be specified by the `tool_path_...` options.
+    /// their app bundles to be specified by the `--tool-x-path` options.
     ///
-    /// Use `tool_1_type` and `tool_2_type` instead of a preset to specify other
+    /// Use `--tool-1-type` and `--tool-2-type` instead of a preset to specify other
     /// combinations of two tools, such as `fontc` and `glyphsapp`.
     #[arg(long, value_enum, alias = "mode")]
     pub(super) preset: Option<Preset>,

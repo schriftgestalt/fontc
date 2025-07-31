@@ -14,8 +14,8 @@
 //! concepts of tool type, tool management and tool instance.
 //!
 //! Running two Glyphs app versions is also a special case because it requires
-//! two separate tool instances but only one tool type. We use the `tool_1_path`
-//! and `tool_2_path` arguments to specify the paths to the two Glyphs app
+//! two separate tool instances but only one tool type. We use the `--tool-1-path`
+//! and `--tool-2-path` arguments to specify the paths to the two Glyphs app
 //! instances. In order to make the tool names unique, we read the version and
 //! build number from the app bundles and use them in the tool names.
 
