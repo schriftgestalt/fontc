@@ -1,4 +1,4 @@
-//! Caching the old tool’s (e. g. `fontmake`) output between runs
+//! Caching `fontmake`’s output between runs
 
 use std::path::{Path, PathBuf};
 
@@ -7,11 +7,15 @@ use crate::Target;
 static CACHE_DIR_NAME: &str = "crater_cached_results";
 
 // the files that we cache for each target
-static FONT_FILE: &str = "old_tool.ttf";
-static TTX_FILE: &str = "old_tool.ttx";
-static MARKKERN_FILE: &str = "old_tool.markkern.txt";
+static FONT_FILE: &str = "fontmake.ttf";
+static TTX_FILE: &str = "fontmake.ttx";
+static MARKKERN_FILE: &str = "fontmake.markkern.txt";
 
 /// Manages a cache of files on disk
+/// Note: Since we now allow (mostly) arbitrary combinations of tools,
+/// we would have to determine which tool is the "old" one. This is probably
+/// not worth the effort, so we just hard-code `fontmake` as before.
+/// This works because `ttx_diff.py` uses actual tool names as file names.
 pub(crate) struct ResultsCache {
     base_results_cache_dir: PathBuf,
 }
