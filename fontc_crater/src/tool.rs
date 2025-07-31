@@ -3,9 +3,11 @@ use std::{
     fs::File,
     path::Path,
     path::PathBuf,
+    str::FromStr,
 };
 
 use plist::Value;
+use serde::{Deserialize, Serialize};
 
 use crate::args::ToolTypeCli;
 
@@ -94,9 +96,6 @@ pub enum ToolConversionError {
     #[error("Tool version could not be determined")]
     ToolVersionNotDetermined(#[source] ToolVersionError),
 }
-
-use serde::{Deserialize, Serialize};
-use std::str::FromStr;
 
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum Tool {
@@ -247,6 +246,24 @@ impl Tool {
             },
             _ => format!("{} ({})", self.tool_type().name(), self.tool_management().description()),
         }
+    }
+}
+
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct ToolPair {
+    pub tool_1: Tool,
+    pub tool_2: Tool,
+}
+
+impl ToolPair {
+    pub fn has_gftools(&self) -> bool {
+        self.tool_1.tool_management() == ToolManagement::ManagedByGfTools ||
+        self.tool_2.tool_management() == ToolManagement::ManagedByGfTools
+    }
+
+    pub fn has_glyphs_app(&self) -> bool {
+        self.tool_1.tool_type() == ToolType::GlyphsApp || 
+        self.tool_2.tool_type() == ToolType::GlyphsApp
     }
 }
 

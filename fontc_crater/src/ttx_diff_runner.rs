@@ -1,10 +1,22 @@
 use std::{
     collections::BTreeMap,
-    path::{Path, PathBuf},
+    path::{
+        Path, 
+        PathBuf
+    },
     process::Command,
 };
 
-use crate::{ci::ResultsCache, BuildType, Results, RunResult, Target};
+use crate::{
+    ci::ResultsCache, 
+    Results, 
+    RunResult, 
+    Target,
+    tool::{
+        ToolManagement, 
+        ToolType,
+    },
+};
 
 static SCRIPT_PATH: &str = "./resources/scripts/ttx_diff.py";
 
@@ -19,26 +31,61 @@ pub(super) fn run_ttx_diff(ctx: &TtxContext, target: &Target) -> RunResult<DiffO
     let tempdir = tempfile::tempdir().expect("couldn't create tempdir");
     let outdir = tempdir.path();
     let source_path = target.source_path(&ctx.source_cache);
-    let compare = target.build.name();
-    let build_dir = outdir.join(compare);
+    let tool_1 = target.tool_1().clone();
+    let tool_2 = target.tool_2().clone();
+    let build_dir = outdir.join(format!(
+        "{}_{}",
+        tool_1.versioned_name(),
+        tool_2.versioned_name()
+    ));
     ctx.results_cache
         .copy_cached_files_to_build_dir(target, &build_dir);
+
     let mut cmd = Command::new("python3");
     cmd.arg(SCRIPT_PATH)
         .arg("--json")
-        .arg("--compare").arg(compare)
         .arg("--outdir").arg(outdir)
-        .arg("--tool_1_path").arg(&ctx.fontc_path)
         .arg("--normalizer_path").arg(&ctx.normalizer_path);
-    if target.build == BuildType::GlyphsApp {
-        cmd.args(["--rebuild", "both"]);
-    } else {
-        cmd.args(["--rebuild", "tool_1"]);
+
+    cmd.arg("--tool_1_type").arg(tool_1.unversioned_name());
+    match tool_1.tool_type() {
+        ToolType::Fontc => {
+            cmd.arg("--tool_1_path").arg(&ctx.fontc_path);
+        },
+        ToolType::GlyphsApp => {
+            if let Some(bundle_path) = tool_1.bundle_path() {
+                cmd.arg("--tool_1_path").arg(bundle_path);
+            }
+        },
+        _ => {},
     }
-    if target.build == BuildType::GfTools {
+
+    cmd.arg("--tool_2_type").arg(tool_2.unversioned_name());
+    match tool_2.tool_type() {
+        ToolType::Fontc => {
+            cmd.arg("--tool_2_path").arg(&ctx.fontc_path);
+        },
+        ToolType::GlyphsApp => {
+            if let Some(bundle_path) = tool_2.bundle_path() {
+                cmd.arg("--tool_2_path").arg(bundle_path);
+            }
+        },
+        _ => {},
+    }
+
+    let rebuild = match (tool_1.tool_type(), tool_2.tool_type()) {
+        (ToolType::Fontmake, _) => "tool_1",
+        (_, ToolType::Fontmake) => "tool_2",
+        _ => "both",
+    };
+    cmd.args(["--rebuild", rebuild]);
+
+    if tool_1.tool_management() == ToolManagement::ManagedByGfTools ||
+       tool_2.tool_management() == ToolManagement::ManagedByGfTools {
         cmd.arg("--config")
             .arg(target.config_path(&ctx.source_cache));
     }
+
     cmd.arg(source_path)
         // set this flag so we have a stable 'modified date'
         .env("SOURCE_DATE_EPOCH", "1730302089");
@@ -163,7 +210,11 @@ impl Summary {
                 }
                 DiffError::CompileFailed(err) if err.tool_1.is_some() => tool_1_failed += 1,
                 DiffError::CompileFailed(err) if err.tool_2.is_some() => tool_2_failed += 1,
-                DiffError::CompileFailed(_) => unreachable!(),
+                DiffError::CompileFailed(_) => {
+                    // If we get here, both compilers succeeded. This should not happen, but we should not panic either
+                    log::warn!("Unexpected `CompileFailed` without errors for tool_1 or tool_2");
+                    other_failure += 1
+                },
                 DiffError::Other(_) => other_failure += 1,
             }
         }
@@ -223,7 +274,7 @@ pub(super) fn assert_can_run_script() {
         Ok(output) => {
             let stdout = String::from_utf8_lossy(&output.stdout);
             let stderr = String::from_utf8_lossy(&output.stderr);
-            eprintln!("could not run ttx_diff.py. Have you setup your venv?");
+            eprintln!("Could not run ttx_diff.py. Have you set up your virtual environment?");
             if !stdout.is_empty() {
                 eprintln!("stdout: {stdout}");
             }
@@ -231,7 +282,7 @@ pub(super) fn assert_can_run_script() {
                 eprintln!("stderr: {stderr}");
             }
         }
-        Err(e) => eprintln!("Error executing ttx_diff script: '{e}'"),
+        Err(e) => eprintln!("Error executing ttx_diff.py: '{e}'"),
     }
 
     std::process::exit(1)

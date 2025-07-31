@@ -23,7 +23,7 @@ use serde::{de::DeserializeOwned, Serialize};
 
 use args::{Args, Commands};
 use error::Error;
-use target::{BuildType, Target};
+use target::Target;
 
 fn main() {
     env_logger::init();

@@ -28,8 +28,8 @@ use crate::{
     tool::{
         Tool, 
         ToolConversionError, 
-        ToolManagement, 
-        ToolType
+        ToolType,
+        ToolPair,
     },
 };
 
@@ -171,22 +171,4 @@ pub enum RunConfigurationError {
 
     #[error("Tool could not be created from CLI arguments")]
     ToolConversion(#[from] ToolConversionError),
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct ToolPair {
-    pub tool_1: Tool,
-    pub tool_2: Tool,
-}
-
-impl ToolPair {
-    pub fn has_gftools(&self) -> bool {
-        self.tool_1.tool_management() == ToolManagement::ManagedByGfTools ||
-        self.tool_2.tool_management() == ToolManagement::ManagedByGfTools
-    }
-
-    pub fn has_glyphs_app(&self) -> bool {
-        self.tool_1.tool_type() == ToolType::GlyphsApp || 
-        self.tool_2.tool_type() == ToolType::GlyphsApp
-    }
 }
