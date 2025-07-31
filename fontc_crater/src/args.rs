@@ -21,9 +21,29 @@ pub(super) enum Commands {
     Ci(CiArgs),
 }
 
+/// A flat representation of the valid tool type + tool management combinations,
+/// used in CLI args.
+#[derive(Clone, Copy, Debug, PartialEq, ValueEnum)]
+pub(super) enum ToolTypeCli {
+    #[value(name = "fontc")]
+    StandaloneFontc,
+
+    #[value(name = "fontmake")]
+    StandaloneFontmake,
+
+    #[value(name = "fontc_gftools")]
+    GfToolsFontc,
+
+    #[value(name = "fontmake_gftools")]
+    GfToolsFontmake,
+
+    #[value(name = "glyphsapp")]
+    GlyphsApp,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, ValueEnum)]
 #[value(rename_all = "lower")]
-pub(super) enum RunMode {
+pub(super) enum Preset {
     /// Run the default tools (`fontmake` and `fontc` directly), plus `fontmake`
     /// and `fontc` via `gftools`.
     GfTools,
@@ -31,7 +51,8 @@ pub(super) enum RunMode {
     /// Run only the default tools (reduces target count when running locally).
     Default,
     
-    /// Run only in Glyphs app version comparison mode.
+    /// Run two Glyphs app versions. Requires `tool_1_path` and `tool_2_path`
+    /// to be set.
     GlyphsApp,
 }
 
@@ -56,21 +77,49 @@ pub(super) struct CiArgs {
 
     /// Directory where results are written.
     ///
-    /// This should be consistent between runs.
-    ///
-    /// When using Glyphs app mode, it is recommended to specify a separate
-    /// directory from the one used for other modes.
+    /// This should be consistent between runs with the same preset or directly
+    /// specified combination of tools.
     #[arg(short = 'o', long = "out")]
     pub(super) out_dir: PathBuf,
 
-    /// Specify which tools to run.
+    /// Preset indicating which tools to run:
     ///
-    /// Note that the default flag, `gftools`, has different semantics from the
-    /// `compare` flag of the `ttx_diff.py` script: There, `gftools` means to
-    /// _only_ run in `gftools` mode, whereas here they run in addition to the
-    /// default tools.
-    #[arg(long, value_enum, default_value_t = RunMode::GfTools)]
-    pub(super) mode: RunMode,
+    /// `default` sets tool 1 to `fontmake` and tool 2 to `fontc`.
+    ///
+    /// `gftools` is like `default` but adds a second set of tools, 
+    /// `fontmake_gftools` and `fontc_gftools`.
+    ///
+    /// `glyphsapp` sets both tools to an instance of the Glyphs app, requiring
+    /// their app bundles to be specified by the `tool_path_...` options.
+    ///
+    /// Use `tool_1_type` and `tool_2_type` instead of a preset to specify other
+    /// combinations of two tools, such as `fontc` and `glyphsapp`.
+    #[arg(long, value_enum, alias = "mode")]
+    pub(super) preset: Option<Preset>,
+
+    /// The type of the first tool which should be used to build fonts to
+    /// compare.
+    #[arg(long, value_enum)]
+    pub(super) tool_1_type: Option<ToolTypeCli>,
+
+    /// For `glyphsapp`: Required path to the application bundle of the specific
+    /// Glyphs app version to be used as tool 1.\nPlease note that if a
+    /// different instance of the Glyphs app with the same major version is
+    /// already running, that version may be used instead.
+    #[arg(long)]
+    pub(super) tool_1_path: Option<PathBuf>,
+
+    /// The type of the second tool which should be used to build fonts to
+    /// compare.
+    #[arg(long, value_enum)]
+    pub(super) tool_2_type: Option<ToolTypeCli>,
+
+    /// For `glyphsapp`: Required path to the application bundle of the specific
+    /// Glyphs app version to be used as tool 2.\nPlease note that if a
+    /// different instance of the Glyphs app with the same major version is
+    /// already running, that version may be used instead.
+    #[arg(long)]
+    pub(super) tool_2_path: Option<PathBuf>,
 
     /// Only generate html (for the provided out_dir).
     #[arg(long)]

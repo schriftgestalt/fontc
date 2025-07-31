@@ -14,6 +14,7 @@ use rayon::{prelude::*, ThreadPoolBuilder};
 mod args;
 mod ci;
 mod error;
+mod run_conf;
 mod target;
 mod tool;
 mod ttx_diff_runner;
