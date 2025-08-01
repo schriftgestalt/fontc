@@ -1172,7 +1172,7 @@ def densify_one_glyph(coords, ends, variations: etree.ElementTree):
 
 # This method is one of the few where it matters which tool is `fontc` and
 # which is `fontmake`.
-def reduce_diff_noise(fontc: etree.ElementTree, fontmake: etree.ElementTree):
+def reduce_diff_noise_fontmake(fontmake: etree.ElementTree):
     fontmake_glyph_map = {
         el.attrib["name"]: int(el.attrib["id"])
         for el in fontmake.xpath("//GlyphOrder/GlyphID")
@@ -1183,7 +1183,9 @@ def reduce_diff_noise(fontc: etree.ElementTree, fontmake: etree.ElementTree):
     sort_indices(fontmake, "GSUB", "//DefaultLangSys", "FeatureIndex")
     reorder_contextual_class_based_rules(fontmake, "GSUB", fontmake_glyph_map)
     reorder_contextual_class_based_rules(fontmake, "GPOS", fontmake_glyph_map)
-    for ttx in (fontc, fontmake):
+
+def reduce_diff_noise(tool1: etree.ElementTree, tool2: etree.ElementTree):
+    for ttx in (tool1, tool2):
         # different name ids with the same value is fine
         name_id_to_name(ttx, "//NamedInstance", "subfamilyNameID")
         name_id_to_name(ttx, "//NamedInstance", "postscriptNameID")
@@ -1215,10 +1217,10 @@ def reduce_diff_noise(fontc: etree.ElementTree, fontmake: etree.ElementTree):
         normalize_name_ids(ttx)
 
     allow_some_off_by_ones(
-        fontc, fontmake, "glyf/TTGlyph", "name", "/contour/pt"
+        tool1, tool2, "glyf/TTGlyph", "name", "/contour/pt"
     )
     allow_some_off_by_ones(
-        fontc, fontmake, "gvar/glyphVariations", "glyph", "/tuple/delta"
+        tool1, tool2, "gvar/glyphVariations", "glyph", "/tuple/delta"
     )
 
 
@@ -1289,24 +1291,15 @@ def generate_output(
     tree_2 = etree.parse(ttx_2)
     fill_in_gvar_deltas(tree_1, font_file_1, tree_2, font_file_2)
 
-    # We skip the `reduce_diff_noise` function unless one of the tools is
-    # `fontc` and the other is `fontmake`.
-    fontc_tree = None
-    if tool_1_type == ToolType.FONTC or tool_1_type == ToolType.FONTC_GFTOOLS:
-        fontc_tree = tree_1
-    elif tool_2_type == ToolType.FONTC or tool_2_type == ToolType.FONTC_GFTOOLS:
-        fontc_tree = tree_2
-
     fontmake_tree = None
     if tool_1_type == ToolType.FONTMAKE or tool_1_type == ToolType.FONTMAKE_GFTOOLS:
         fontmake_tree = tree_1
     elif tool_2_type == ToolType.FONTMAKE or tool_2_type == ToolType.FONTMAKE_GFTOOLS:
         fontmake_tree = tree_2
+    if fontmake_tree:
+        reduce_diff_noise(fontmake=fontmake_tree)
 
-    if fontc_tree is not None and fontmake_tree is not None:
-        # This method is one of the few where it matters which tool is `fontc` and
-        # which is `fontmake`.
-        reduce_diff_noise(fontc=fontc_tree, fontmake=fontmake_tree)
+    reduce_diff_noise(tool1=tree_1, tool2=tree_2)
 
     map_1 = extract_comparables(tree_1, build_dir, tool_1_name)
     map_2 = extract_comparables(tree_2, build_dir, tool_2_name)
