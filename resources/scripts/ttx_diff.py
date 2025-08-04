@@ -551,10 +551,12 @@ def application(bundle_path: str) -> (NSDistantObject, str, str):
 
     # There is no running app, or another error occurred. Try to launch the app
     # via the provided bundle path.
+    # `-F` opens the application “fresh” (without restoring windows). This is important 
+    #  when relaunching the app after a crash.
     # `-g` opens the application in the background.
     # `-j` opens the application hidden (its windows are not visible).
     print_if_not_json(f"Opening application at {bundle_path}")
-    os.system(f"open -a '{bundle_path}' -g -j")
+    os.system(f"open -a '{bundle_path}' -F -g -j")
 
     # Try to establish a connection to the running app.
     # Return the value even if it is `None`.
