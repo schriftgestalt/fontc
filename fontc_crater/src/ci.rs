@@ -372,22 +372,7 @@ fn buildable_with_glyphs_app(src_path: &Path) -> bool {
         .extension()
         .map(|s| s.to_string_lossy())
         .unwrap_or_default();
-    if !extension.to_lowercase().starts_with("glyphs") {
-        return false
-    }
-
-    // Skip fonts which currently cause Glyphs app to crash.
-    // Aleo does not crash the app when exporting manually,
-    // but there still seems to be an issue with it.
-    let file_stem = src_path
-        .file_stem()
-        .map(|s| s.to_string_lossy())
-        .unwrap_or_default();
-    if ["Aleo", "Aleo-Italic"].contains(&file_stem.as_ref()) {
-        return false;
-    }
-
-    return true
+    extension.to_lowercase().starts_with("glyphs")
 }
 
 fn format_elapsed_time<Tmz: TimeZone>(start: &DateTime<Tmz>, end: &DateTime<Tmz>) -> String {
