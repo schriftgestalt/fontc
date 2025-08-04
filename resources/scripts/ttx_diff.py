@@ -1312,6 +1312,14 @@ def generate_output(
 
     map_1 = extract_comparables(tree_1, build_dir, tool_1_name)
     map_2 = extract_comparables(tree_2, build_dir, tool_2_name)
+    
+    if tool_1_type == ToolType.GLYPHSAPP and tool_2_type == ToolType.GLYPHSAPP:
+        # Remove BASE table when comparing two Glyphs app versions. We know that
+        # it is written only by Glyphs 4+, so we can ignore it in the comparison.
+        if ("BASE" in map_1) ^ ("BASE" in map_2):
+            map_1.pop("BASE", None)
+            map_2.pop("BASE", None)
+
     size_diffs = check_sizes(font_file_1, font_file_2)
     map_1[MARK_KERN_NAME] = gpos_1
     map_2[MARK_KERN_NAME] = gpos_2
