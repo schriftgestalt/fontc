@@ -625,7 +625,14 @@ def exportFirstInstance(
         # Glyphs defaults to True for non-variable fonts.
         arguments['removeOverlap'] = False
 
-    result = instance.generate_(arguments)
+    try:
+        result = instance.generate_(arguments)
+    except Exception as e:
+        # Catch Glyphs app crash and report as error.
+        cmd = []
+        cmd.append(str(source))
+        cmd.append(str(out_file_name))
+        raise BuildFail(cmd, str(e))
 
     doc.close()
     
