@@ -1193,8 +1193,8 @@ def reduce_diff_noise_fontmake(fontmake: etree.ElementTree):
     reorder_contextual_class_based_rules(fontmake, "GSUB", fontmake_glyph_map)
     reorder_contextual_class_based_rules(fontmake, "GPOS", fontmake_glyph_map)
 
-def reduce_diff_noise(tool1: etree.ElementTree, tool2: etree.ElementTree):
-    for ttx in (tool1, tool2):
+def reduce_diff_noise(tool_1: etree.ElementTree, tool_2: etree.ElementTree):
+    for ttx in (tool_1, tool_2):
         # different name ids with the same value is fine
         name_id_to_name(ttx, "//NamedInstance", "subfamilyNameID")
         name_id_to_name(ttx, "//NamedInstance", "postscriptNameID")
@@ -1226,10 +1226,10 @@ def reduce_diff_noise(tool1: etree.ElementTree, tool2: etree.ElementTree):
         normalize_name_ids(ttx)
 
     allow_some_off_by_ones(
-        tool1, tool2, "glyf/TTGlyph", "name", "/contour/pt"
+        tool_1, tool_2, "glyf/TTGlyph", "name", "/contour/pt"
     )
     allow_some_off_by_ones(
-        tool1, tool2, "gvar/glyphVariations", "glyph", "/tuple/delta"
+        tool_1, tool_2, "gvar/glyphVariations", "glyph", "/tuple/delta"
     )
 
 
@@ -1308,7 +1308,7 @@ def generate_output(
     if fontmake_tree:
         reduce_diff_noise_fontmake(fontmake=fontmake_tree)
 
-    reduce_diff_noise(tool1=tree_1, tool2=tree_2)
+    reduce_diff_noise(tree_1, tree_2)
 
     map_1 = extract_comparables(tree_1, build_dir, tool_1_name)
     map_2 = extract_comparables(tree_2, build_dir, tool_2_name)
