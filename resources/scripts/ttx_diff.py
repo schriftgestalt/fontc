@@ -748,7 +748,7 @@ def drop_weird_names(ttx):
         drop.getparent().remove(drop)
 
 
-def erase_checksum(ttx):
+def erase_checksum_and_dates(ttx):
     el = select_one(ttx, "//head/checkSumAdjustment")
     del el.attrib["value"]
     el = select_one(ttx, "//head/created")
@@ -1170,8 +1170,8 @@ def densify_one_glyph(coords, ends, variations: etree.ElementTree):
     return did_work
 
 
-# This method is one of the few where it matters which tool is `fontc` and
-# which is `fontmake`.
+# Reduce noise specific to `fontmake`.
+# Run this before the general `reduce_diff_noise` function.
 def reduce_diff_noise_fontmake(fontmake: etree.ElementTree):
     fontmake_glyph_map = {
         el.attrib["name"]: int(el.attrib["id"])
@@ -1200,7 +1200,7 @@ def reduce_diff_noise(tool1: etree.ElementTree, tool2: etree.ElementTree):
         drop_weird_names(ttx)
 
         # for matching purposes checksum is just noise
-        erase_checksum(ttx)
+        erase_checksum_and_dates(ttx)
 
         stat_like_fontmake(ttx)
         remove_mark_and_kern_lookups(ttx)
@@ -1297,7 +1297,7 @@ def generate_output(
     elif tool_2_type == ToolType.FONTMAKE or tool_2_type == ToolType.FONTMAKE_GFTOOLS:
         fontmake_tree = tree_2
     if fontmake_tree:
-        reduce_diff_noise(fontmake=fontmake_tree)
+        reduce_diff_noise_fontmake(fontmake=fontmake_tree)
 
     reduce_diff_noise(tool1=tree_1, tool2=tree_2)
 
