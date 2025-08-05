@@ -970,10 +970,10 @@ def sort_gdef_mark_filter_sets(ttx: etree.ElementTree):
     etree.indent(markglyphs, level=3)
 
 
-LOOKUPS_TO_SKIP = set([2, 4, 5, 6])  # pairpos, markbase, marklig, markmark
+LOOKUPS_TO_SKIP = set([2, 3, 4, 5, 6])  # pairpos, cursive, markbase, marklig, markmark
 
 
-def remove_mark_and_kern_lookups(ttx):
+def remove_mark_and_kern_and_curs_lookups(ttx):
     gpos = ttx.find("GPOS")
     if gpos is None:
         return
@@ -1212,7 +1212,7 @@ def reduce_diff_noise(tool_1: etree.ElementTree, tool_2: etree.ElementTree):
         erase_checksum_and_dates(ttx)
 
         stat_like_fontmake(ttx)
-        remove_mark_and_kern_lookups(ttx)
+        remove_mark_and_kern_and_curs_lookups(ttx)
 
         point_orders = normalize_glyf_contours(ttx)
         normalize_gvar_contours(ttx, point_orders)
