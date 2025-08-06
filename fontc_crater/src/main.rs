@@ -73,14 +73,7 @@ fn run_all<T: Send, E: Send, Cx: Sync>(
     let total_targets = targets.len();
     let counter = AtomicUsize::new(0);
     let currently_running = AtomicUsize::new(0);
-
-    let has_glyphs_app = targets.iter().any(|target| target.tool_pair.has_glyphs_app());
-    let threadpool = if has_glyphs_app {
-        ThreadPoolBuilder::new().num_threads(1).build().unwrap()
-    } else {
-        ThreadPoolBuilder::new().build().unwrap()
-    };
-
+    let threadpool = ThreadPoolBuilder::new().build().unwrap()
     let results = threadpool.install(|| {
         targets
             .into_par_iter()

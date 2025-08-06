@@ -62,6 +62,7 @@ import shutil
 import subprocess
 import sys
 import time
+import uuid
 import yaml
 
 from abc import ABC, abstractmethod
@@ -87,6 +88,10 @@ from urllib.parse import urlparse
 # Since `absl` flags do not support overriding the generated flag names, the
 # string values should match the lowercase versions of the constants (i. e.
 # include the same underscores).
+#
+# Note:  This is currently a flat list like the `ToolTypeCli` enum in
+# `fontc_crater/src/args.rs`. It does not separate the concepts of tool type,
+# tool management and tool instance.
 class ToolType(StrEnum):
     # Standalone versions
     FONTC = "fontc"
@@ -540,7 +545,10 @@ def application(bundle_path: str) -> (NSDistantObject, str, str):
     major_version = version.split('.', 1)[0]
 
     # The registered name of a Glyphs app instance can include the build number.
-    registered_name = f"{BASE_BUNDLE_IDENTIFIER}{major_version}.{build_number}"
+    # We add a UUID to support multiple instances of the same build running simultaneously.
+    # The UUID is passed to the app when launching it with the `open` command below.
+    proxy_uuid = uuid.uuid4()
+    registered_name = f"{BASE_BUNDLE_IDENTIFIER}{major_version}.{build_number}.{proxy_uuid}"
 
     # First, try to establish a connection to a running app matching the
     # registered name. We need only a low number of maximum tries because we
@@ -555,8 +563,9 @@ def application(bundle_path: str) -> (NSDistantObject, str, str):
     #  when relaunching the app after a crash.
     # `-g` opens the application in the background.
     # `-j` opens the application hidden (its windows are not visible).
+    # `-n` opens a new instance of the application, enabling multiple simultaneous exports.
     print_if_not_json(f"Opening application at {bundle_path}")
-    os.system(f"open -a '{bundle_path}' -F -g -j")
+    os.system(f"open -a '{bundle_path}' -F -g -j -n --args -GSProxyPortNameUUID {proxy_uuid}")
 
     # Try to establish a connection to the running app.
     # Return the value even if it is `None`.
@@ -604,7 +613,7 @@ def exportFirstInstance(
 ):
     out_file = build_dir / out_file_name
     if out_file.exists():
-        eprint(f"reusing {out_file}")
+        print_if_not_json(f"reusing {out_file}")
         return
 
     source_path = source.as_posix()
@@ -634,6 +643,10 @@ def exportFirstInstance(
         cmd = []
         cmd.append(str(source))
         cmd.append(str(out_file_name))
+
+        # Terminate app just in case.
+        terminate_macos_app(proxy)
+
         raise BuildFail(cmd, str(e))
 
     doc.close()
@@ -651,6 +664,10 @@ def exportFirstInstance(
 
         # If not successful, `result` is a list of `NSError` objects.
         errors_string = "; ".join(error.localizedDescription() for error in result)
+
+        # Terminate app before exiting the function.
+        terminate_macos_app(proxy)
+
         raise BuildFail(cmd, errors_string)
     
     # Rename file to our standard name.
@@ -658,6 +675,22 @@ def exportFirstInstance(
     temp_file_name = temp_file.name
     file_to_rename = build_dir / temp_file_name
     file_to_rename.rename(out_file)
+
+    # Terminate app exiting the function.
+    terminate_macos_app(proxy)
+
+
+def terminate_macos_app(
+    proxy: NSDistantObject
+):
+    try:
+        proxy.terminate_(None)
+    except Exception as e:
+        if 'NSInvalidReceivePortException' in str(e):
+            print_if_not_json("Application is terminating. Ignoring expected exception.")
+        else:
+            cmd = []
+            raise BuildFail(cmd, str(e))
 
 
 #===============================================================================
@@ -1666,7 +1699,7 @@ class GlyphsAppTool(Tool):
     def __post_init__(self):
         self._glyphsapp_proxy, self._version, self._build_number = application(self.bundle_path)
         if self._glyphsapp_proxy is None:
-            sys.exit("No JSTalk connection to Glyphs app at {self.bundle_path}")
+            sys.exit(f"No JSTalk connection to Glyphs app at {self.bundle_path}")
 
     @property
     def type(self) -> ToolType:
@@ -1684,6 +1717,7 @@ class GlyphsAppTool(Tool):
     def build_action(self, build_dir: Path, font_file_name: str = None) -> Callable[[], None]:
         def action():
             exportFirstInstance(self._glyphsapp_proxy, self.source, build_dir, font_file_name)
+            self._glyphsapp_proxy = None
         return action
 
 
