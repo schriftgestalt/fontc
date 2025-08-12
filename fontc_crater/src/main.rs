@@ -73,7 +73,7 @@ fn run_all<T: Send, E: Send, Cx: Sync>(
     let total_targets = targets.len();
     let counter = AtomicUsize::new(0);
     let currently_running = AtomicUsize::new(0);
-    let threadpool = ThreadPoolBuilder::new().build().unwrap()
+    let threadpool = ThreadPoolBuilder::new().build().unwrap();
     let results = threadpool.install(|| {
         targets
             .into_par_iter()
