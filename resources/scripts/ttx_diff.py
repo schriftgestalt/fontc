@@ -11,20 +11,20 @@ https://github.com/pyenv/pyenv-virtualenv).
 
 Usage:
     # Rebuild with `fontc` and `fontmake` and compare.
-    python resources/scripts/ttx_diff.py --compare default ../OswaldFont/sources/Oswald.glyphs
+    python resources/scripts/ttx_diff.py --tool_1_type fontc --tool_2_type fontmake ../OswaldFont/sources/Oswald.glyphs
 
     # Rebuild the `fontc` copy, reuse the prior `fontmake` copy (if present), 
     # and compare. Useful if you are making changes to `fontc` meant to narrow 
     # the diff.
-    python resources/scripts/ttx_diff.py --compare default --rebuild fontc ../OswaldFont/sources/Oswald.glyphs
+    python resources/scripts/ttx_diff.py --tool_1_type fontc --tool_2_type fontmake --rebuild fontc ../OswaldFont/sources/Oswald.glyphs
 
     # Rebuild with `fontc` and `fontmake` (managed by `gftools`) and compare.
     # This requires a config file.
-    python resources/scripts/ttx_diff.py --compare gftools --config ../OswaldFont/sources/config.yaml ../OswaldFont/sources/Oswald.glyphs
+    python resources/scripts/ttx_diff.py --tool_1_type fontc_gftools --tool_2_type fontmake_gftools --config ../OswaldFont/sources/config.yaml ../OswaldFont/sources/Oswald.glyphs
 
     # Rebuild with Glyphs 3 and Glyphs 4 and compare. The paths to the app
     # bundles have to be specified.
-    python resources/scripts/ttx_diff.py --compare glyphsapp --tool_1_path '/Applications/Glyphs 3.3.1 (3343).app' --tool_2_path '/Applications/Glyphs 4.0a (3837).app' ../OswaldFont/sources/Oswald.glyphs
+    python resources/scripts/ttx_diff.py --tool_1_type glyphsapp --tool_1_path '/Applications/Glyphs 3.3.1 (3343).app' --tool_2_type glyphsapp --tool_2_path '/Applications/Glyphs 4.0a (3837).app' ../OswaldFont/sources/Oswald.glyphs
     
     # Rebuild with precompiled `fontc` binary and Glyphs 4 and compare.
     python resources/scripts/ttx_diff.py --tool_1_type fontc --tool_1_path ~/fontc/target/release/fontc --tool_2_type glyphsapp --tool_2_path '/Applications/Glyphs 4.0a (3837).app' ../OswaldFont/sources/Oswald.glyphs
