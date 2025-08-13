@@ -631,9 +631,11 @@ impl PlistParamsExt for Plist {
         let plist = self.as_dict()?;
         let name = plist.get("Axis").and_then(Plist::as_str)?;
         let location = plist.get("Location").and_then(Plist::as_f64)?;
+        // trunc to match the int() call in Python
+        // <https://github.com/googlefonts/glyphsLib/blob/8caf679cfe4ea774d0d27088c89d382c5b6e0185/Lib/glyphsLib/builder/axes.py#L433-L443>
         Some(AxisLocation {
             axis_name: name.into(),
-            location: location.into(),
+            location: location.trunc().into(),
         })
     }
 
@@ -2221,8 +2223,11 @@ impl UserToDesignMapping {
         };
         let mut result = Self(result);
         if incomplete_mapping {
+            //https://github.com/googlefonts/glyphsLib/blob/682ff4b17/Lib/glyphsLib/builder/axes.py#L251
             result.add_instance_mappings_if_new(instances);
-            result.add_master_mappings_if_new(from);
+            if result.0.is_empty() || result.0.values().all(|v| v.is_identity()) {
+                result.add_master_mappings_if_new(from);
+            }
         }
         result
     }
@@ -2979,7 +2984,7 @@ impl TryFrom<RawFont> for Font {
     }
 }
 
-fn preprocess_unparsed_plist(s: &str) -> Cow<str> {
+fn preprocess_unparsed_plist(s: &str) -> Cow<'_, str> {
     // Glyphs has a wide variety of unicode definitions, not all of them parser friendly
     // Make unicode always a string, without any wrapping () so we can parse as csv, radix based on format version
     let unicode_re =
@@ -3755,14 +3760,15 @@ mod tests {
         let font = Font::load(&glyphs2_dir().join("Fea_Prefix.glyphs")).unwrap();
         assert_eq!(
             vec![
-                concat!(
-                    "# Prefix: Languagesystems\n",
-                    "# automatic\n",
-                    "languagesystem DFLT dflt;\n\n",
-                    "languagesystem latn dflt;\n",
-                    "and more;\n",
-                ),
-                concat!("# Prefix: \n# automatic\nthanks for all the fish;",),
+                "\
+# Prefix: Languagesystems
+# automatic
+languagesystem DFLT dflt;
+
+languagesystem latn dflt;
+and more;
+",
+                "# Prefix: \n# automatic\nthanks for all the fish;",
             ],
             font.features
                 .iter()
@@ -3776,22 +3782,21 @@ mod tests {
         let font = Font::load(&glyphs2_dir().join("Fea_Feature.glyphs")).unwrap();
         assert_eq!(
             vec![
-                concat!(
-                    "feature aalt {\n",
-                    "feature locl;\n",
-                    "feature tnum;\n",
-                    "} aalt;",
-                ),
-                concat!(
-                    "feature ccmp {\n",
-                    "# automatic\n",
-                    "lookup ccmp_Other_2 {\n",
-                    "  sub @Markscomb' @MarkscombCase by @MarkscombCase;\n",
-                    "  sub @MarkscombCase @Markscomb' by @MarkscombCase;\n",
-                    "} ccmp_Other_2;\n\n",
-                    "etc;\n",
-                    "} ccmp;",
-                ),
+                "\
+feature aalt {
+feature locl;
+feature tnum;
+} aalt;",
+                "\
+feature ccmp {
+# automatic
+lookup ccmp_Other_2 {
+  sub @Markscomb' @MarkscombCase by @MarkscombCase;
+  sub @MarkscombCase @Markscomb' by @MarkscombCase;
+} ccmp_Other_2;
+
+etc;
+} ccmp;",
             ],
             font.features
                 .iter()
@@ -4659,6 +4664,39 @@ mod tests {
                 (OrderedFloat(700.), OrderedFloat(125.)),
                 (OrderedFloat(1000.), OrderedFloat(208.))
             ]
+        )
+    }
+
+    #[test]
+    fn glyphs2_avoid_adding_mapping_from_master() {
+        // this source has a master which does not correspond to an instance,
+        // but the instances provide a valid non-identity mapping; we should
+        // avoid adding the mapping from the master.
+
+        let font = Font::load(&glyphs2_dir().join("master_missing_from_instances.glyphs")).unwrap();
+
+        let mapping = &font.axis_mappings.0.get("Weight").unwrap().0;
+        assert_eq!(
+            mapping.as_slice(),
+            &[
+                (OrderedFloat(100f64), OrderedFloat(20f64)),
+                (OrderedFloat(300.), OrderedFloat(50.)),
+                (OrderedFloat(400.), OrderedFloat(71.)),
+                (OrderedFloat(700.), OrderedFloat(156.)),
+                (OrderedFloat(900.), OrderedFloat(226.)),
+            ]
+        )
+    }
+
+    #[test]
+    fn truncates_axis_location() {
+        let font = Font::load(&glyphs3_dir().join("WghtVar_AxisLocationFloat.glyphs")).unwrap();
+        let mapping = &font.axis_mappings.0.get("Weight").unwrap().0;
+
+        // The user location 400.75 was truncated
+        assert_eq!(
+            mapping.as_slice(),
+            &[(OrderedFloat(400f64), OrderedFloat(0f64)),]
         )
     }
 }

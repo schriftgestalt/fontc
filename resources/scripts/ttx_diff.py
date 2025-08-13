@@ -907,6 +907,19 @@ def erase_type_from_stranded_points(ttx):
             points[0].attrib["on"] = "irrelevent"
 
 
+# only fontc emits name 25 currently, don't treat that as an error
+def allow_fontc_only_variations_postscript_prefix(tool_1, tool_2):
+    xpath_to_name_25 = "//namerecord[@nameID='25']"
+    tool_1_name25 = tool_1.xpath(xpath_to_name_25)
+    tool_2_name25 = tool_2.xpath(xpath_to_name_25)
+    if tool_1_name25 and not tool_2_name25:
+        for n in tool_1_name25:
+            n.getparent().remove(n)
+    elif tool_2_name25 and not tool_1_name25:
+        for n in tool_2_name25:
+            n.getparent().remove(n)
+
+
 # This method is one of the few where it matters which tool is `fontc` and
 # which is `fontmake`.
 def allow_some_off_by_ones(fontc, fontmake, container, name_attr, coord_holder):
@@ -1257,6 +1270,10 @@ def reduce_diff_noise(tool_1: etree.ElementTree, tool_2: etree.ElementTree):
         # sort names within the name table (do this at the end, so ids are correct
         # for earlier steps)
         normalize_name_ids(ttx)
+
+    allow_fontc_only_variations_postscript_prefix(
+        tool_1, tool_2
+    )
 
     allow_some_off_by_ones(
         tool_1, tool_2, "glyf/TTGlyph", "name", "/contour/pt"
