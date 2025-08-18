@@ -181,7 +181,7 @@ impl Target {
         write!(&mut cmd, " --tool_2_type {}", tool_2.unversioned_name()).unwrap();
         if tool_2.tool_type() == ToolType::GlyphsApp {
             if let Some(tool_path) = &tool_2.bundle_path() {
-                write!(&mut cmd, " --tool_1_path {}", tool_path.display()).unwrap();
+                write!(&mut cmd, " --tool_2_path {}", tool_path.display()).unwrap();
             }
         }
         if tool_1.tool_management() == ToolManagement::ManagedByGfTools ||
