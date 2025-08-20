@@ -102,7 +102,11 @@ impl<'a> CornerErasureCtx<'a> {
         let Some(maybe_corner) = self.possible_corner(seg_ix) else {
             return false;
         };
-        log::trace!("considering segment starting at {}", maybe_corner.one.end());
+        log::trace!(
+            "considering ({}..{})",
+            maybe_corner.one.end(),
+            maybe_corner.two.start()
+        );
         if !maybe_corner.points_are_right_of_line() {
             log::trace!(
                 "crossing points {} and {} not on same side of line",
@@ -121,10 +125,13 @@ impl<'a> CornerErasureCtx<'a> {
         // invert value of t0 so for both values '0' means at the open corner
         // <https://github.com/googlefonts/glyphsLib/blob/74c63244fdbef1da5/Lib/glyphsLib/filters/eraseOpenCorners.py#L105>
         let t0_inv = 1.0 - t0;
-        log::trace!("found intersections at {t0_inv} and {t1}");
-        if ((t0_inv < 0.5 && t1 < 0.5) || t0_inv < 0.3 || t1 < 0.3)
-            && t1 > 0.0001
-            && t0_inv > 0.0001
+        log::trace!("found intersections at {t0} and {t1}");
+        // from glyphsapp: https://github.com/googlefonts/fontc/issues/1600#issuecomment-3190896627
+        if ((t0_inv < 0.5 && t1 < 0.5)
+            || (t0_inv < 0.3 && t1 < 0.99)
+            || (t0_inv < 0.99 && t1 < 0.3))
+            && t0_inv > 0.001
+            && t1 > 0.001
         {
             log::debug!("found an open corner");
             // this looks like an open corner, so now do the deletion
@@ -350,6 +357,17 @@ struct Intersection {
     t1: f64,
 }
 
+impl Intersection {
+    // used to avoid duplicate equivalent intersections:
+    // https://github.com/fonttools/fonttools/blob/7b50bde2ee/Lib/fontTools/misc/bezierTools.py#L1366
+    fn unique_key(&self) -> (u64, u64) {
+        (
+            (self.t0 / PY_ACCURACY) as u64,
+            (self.t1 / PY_ACCURACY) as u64,
+        )
+    }
+}
+
 /// Find an intersection of two segments, if any exist
 ///
 /// It is possible for segments to intersect multiple times; in this case we
@@ -429,8 +447,6 @@ const PY_ACCURACY: f64 = 1e-3;
 fn curve_curve_intersection_py(seg1: PathSeg, seg2: PathSeg) -> Option<Intersection> {
     let mut result = Vec::new();
     curve_curve_py_impl(seg1, seg2, &(0.0..1.0), &(0.0..1.0), &mut result);
-    result.sort_by_key(|hit| (OrderedFloat(hit.t0), OrderedFloat(hit.t1)));
-    result.dedup_by_key(|hit| ((hit.t0 / PY_ACCURACY) as i64, (hit.t1 / PY_ACCURACY) as i64));
     result.first().copied()
 }
 
@@ -452,10 +468,16 @@ fn curve_curve_py_impl(
     }
     // if bounds intersect but they're tiny, approximate
     if bounds1.area() < PY_ACCURACY && bounds2.area() < PY_ACCURACY {
-        buf.push(Intersection {
+        let hit = Intersection {
             t0: midpoint(range1),
             t1: midpoint(range2),
-        });
+        };
+        let key = hit.unique_key();
+        // python dedupes after, using a set; the number of hits is bounded
+        // and it's probably just cheaper to be quadratic
+        if !buf.iter().any(|x| x.unique_key() == key) {
+            buf.push(hit);
+        }
         return;
     }
 
@@ -878,6 +900,32 @@ mod tests {
         )
     }
 
+    // ensure that we match fonttools when intersection produces more than one
+    // hit (in which case fonttools uses the first hit, which is based on the
+    // operation order of the divide/conquer calls in curve_curve_intersection_py
+    #[test]
+    fn curve_curve_intersect_order() {
+        let _ = env_logger::builder().is_test(true).try_init();
+        let seg1 = CubicBez::new(
+            (336.0, 150.0),
+            (340.0, 151.0),
+            (341.0, 151.0),
+            (339.0, 152.0),
+        )
+        .into();
+        let seg2 = CubicBez::new(
+            (340.0, 152.0),
+            (340.0, 151.0),
+            (338.0, 149.0),
+            (335.0, 148.0),
+        )
+        .into();
+
+        let hit = curve_curve_intersection_py(seg1, seg2).unwrap();
+        // matches bezierTools as of 7b50bde2e
+        assert_eq!(hit.t1, 0.29296875);
+    }
+
     #[test]
     fn corner_with_t() {
         let _ = env_logger::builder().is_test(true).try_init();
@@ -897,18 +945,18 @@ mod tests {
     }
 
     #[test]
-    fn corner_with_t_2() {
-        let _ = env_logger::builder().is_test(true).try_init();
+    fn corner_exactly_on_line() {
+        // based on a test case reduced from NotoSerifTangut
         let mut path = BezPath::new();
-        path.move_to((3.0, 155.0));
-        path.line_to((14.0, 155.0));
-        path.line_to((14.0, 0.0));
-        path.line_to((80.0, 111.0));
-        path.line_to((14.0, 111.0));
-        path.line_to((3.0, 155.0));
+        path.move_to((339.0, 141.0));
+        path.line_to((354.0, 0.));
+        path.line_to((328.0, 0.));
+        path.line_to((328.0, 208.));
+        path.line_to((384.0, 208.));
+        path.curve_to((364.91, 186.86), (346.24, 168.53), (328.0, 153.0));
+        path.line_to((339.0, 141.0));
         path.close_path();
-
-        assert!(erase_open_corners(&path).is_some());
+        assert!(erase_open_corners(&path).is_none());
     }
 
     #[test]
