@@ -123,6 +123,10 @@ impl RunConfiguration {
         }
     }
 
+    pub fn has_glyphs_app(&self) -> bool {
+        self.tool_pairs.iter().any(|pair| pair.has_glyphs_app())
+    }
+
     fn tool_pair_for_category(&self) -> &ToolPair {
         &self.tool_pairs[0]
     }
