@@ -577,10 +577,12 @@ def app_bundle_version(bundle_path) -> (str, str):
 #
 # The registered name should have the following format:
 #
-#     com.GeorgSeifert.Glyphs(V)[.BBBB]
+#     com.GeorgSeifert.Glyphs(V)[.BBBB][.UUID]
 #
 # `V` is the major version (currently 3 or 4).
 # `BBBB` is an optional build number (e. g. 3343 for Glyphs 3.3.1).
+# `UUID` is an optional UUID that identifies one instance of a given build.
+# This is required when running multiple instances of the same build to speed up `fontc_crater`.
 #
 # Returns `None` if the connection could not be established.
 def application_proxy(registered_name: str, max_tries: int) -> NSDistantObject:
