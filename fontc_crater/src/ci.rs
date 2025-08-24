@@ -7,12 +7,11 @@
 
 use std::{
     collections::{BTreeMap, HashSet},
-    fmt::Write,
     path::{Path, PathBuf},
     process::Command,
 };
 
-use chrono::{DateTime, TimeZone, Utc};
+use chrono::{DateTime, Utc};
 use google_fonts_sources::{Config, FontSource, SourceSet};
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use serde::de::DeserializeOwned;
@@ -168,7 +167,10 @@ fn run_crater_and_save_results(
     let finished = Utc::now();
 
     let n_targets = targets.len();
-    let elapsed = format_elapsed_time(&began, &finished);
+    let elapsed = finished.signed_duration_since(began);
+    let elapsed = elapsed.to_std().unwrap_or_default();
+    let elapsed = super::human_readable_duration(elapsed);
+
     log::info!("completed {n_targets} targets in {elapsed}");
 
     let summary = super::ttx_diff_runner::Summary::new(&results);
@@ -373,21 +375,6 @@ fn buildable_with_glyphs_app(src_path: &Path) -> bool {
         .map(|s| s.to_string_lossy())
         .unwrap_or_default();
     extension.to_lowercase().starts_with("glyphs")
-}
-
-fn format_elapsed_time<Tmz: TimeZone>(start: &DateTime<Tmz>, end: &DateTime<Tmz>) -> String {
-    let delta = end.clone().signed_duration_since(start);
-    let mut out = String::new();
-    let hours = delta.num_hours();
-    let mins = delta.num_minutes() - hours * 60;
-    let secs = delta.num_seconds() - (hours * 60 + mins) * 60;
-    assert!(!hours.is_negative() | mins.is_negative() | secs.is_negative());
-    if delta.num_hours() > 0 {
-        write!(&mut out, "{hours}h").unwrap();
-    }
-    write!(&mut out, "{mins}m").unwrap();
-    write!(&mut out, "{secs}s").unwrap();
-    out
 }
 
 fn precompile_rust_binaries(temp_dir: &Path) -> (PathBuf, PathBuf) {

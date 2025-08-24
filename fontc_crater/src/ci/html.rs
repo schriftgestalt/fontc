@@ -345,7 +345,12 @@ fn make_table_body(runs: &[RunSummary]) -> Markup {
             td.other_err {  (run.stats.other_failure) " " (other_err_diff)  }
             }
         };
-        let elapsed = super::format_elapsed_time(&run.began, &run.finished);
+        let elapsed = run
+            .finished
+            .signed_duration_since(run.began)
+            .to_std()
+            .unwrap_or_default();
+        let elapsed = crate::human_readable_duration(elapsed);
         let class = (!default_visible).then_some("hidden_row");
         html! {
             tr class=[class] {
@@ -607,7 +612,7 @@ fn make_diff_report(
         let diff_table =
             format_diff_report_detail_table(diff_details, prev_details, tool_1_category_name, tool_2_category_name);
 
-        let annotations = format_annotations(target, annotations);
+        let annotation_list = format_annotations(target, annotations);
 
         let details = html! {
             div.diff_info {
@@ -616,19 +621,24 @@ fn make_diff_report(
                 " "
                 a href = "" onclick = (onclick) { "copy reproduction command" }
                 " "
-                (annotations)
+                (annotation_list)
             }
         };
 
         // avoid .9995 printing as 100%
         let ratio_fmt = format!("{:.3}%", (ratio * 1000.0).floor() / 1000.0);
+        let maybe_annotation_icon = if annotations.contains_key(target) {
+            " ✎"
+        } else {
+            ""
+        };
         let target_description = make_target_description(target);
 
         items.push(html! {
             details {
                 summary {
                     span.font_path {
-                        (target_description)
+                        (target_description) (maybe_annotation_icon)
                     }
                     span.diff_result { (ratio_fmt) " " (decoration) }
                     span.changed_tag_list { (changed_tag_list) }
