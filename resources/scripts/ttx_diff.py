@@ -517,23 +517,6 @@ def print_if_not_json(message: str):
         print(message)
 
 
-# Returns the version and build numbers of the application at the given bundle
-# path. Returns the string `Unknown` for values that cannot be found.
-def app_bundle_version(bundle_path) -> (str, str):
-    info_plist_path = os.path.join(bundle_path, "Contents", "Info.plist")
-    if not os.path.exists(info_plist_path):
-        raise FileNotFoundError(f"Info.plist not found at: {info_plist_path}")
-
-    with open(info_plist_path, 'rb') as f:
-        plist = plistlib.load(f)
-
-    # CFBundleShortVersionString is the user-facing version
-    # CFBundleVersion is typically a build number
-    version = plist.get("CFBundleShortVersionString", UNKNOWN_NAME)
-    build_number = plist.get("CFBundleVersion", UNKNOWN_NAME)
-    return version, build_number
-
-
 # This function has been adapted from `Glyphs remote scripts/Glyphs.py`
 # in the `https://github.com/schriftgestalt/GlyphsSDK` repository.
 def application(bundle_path: str) -> (NSDistantObject, str, str):
@@ -570,6 +553,23 @@ def application(bundle_path: str) -> (NSDistantObject, str, str):
     # Try to establish a connection to the running app.
     # Return the value even if it is `None`.
     return application_proxy(registered_name, MAX_CONNECTION_TRIES), version, build_number
+
+
+# Returns the version and build numbers of the application at the given bundle
+# path. Returns the string `Unknown` for values that cannot be found.
+def app_bundle_version(bundle_path) -> (str, str):
+    info_plist_path = os.path.join(bundle_path, "Contents", "Info.plist")
+    if not os.path.exists(info_plist_path):
+        raise FileNotFoundError(f"Info.plist not found at: {info_plist_path}")
+
+    with open(info_plist_path, 'rb') as f:
+        plist = plistlib.load(f)
+
+    # CFBundleShortVersionString is the user-facing version
+    # CFBundleVersion is typically a build number
+    version = plist.get("CFBundleShortVersionString", UNKNOWN_NAME)
+    build_number = plist.get("CFBundleVersion", UNKNOWN_NAME)
+    return version, build_number
 
 
 # This function has been adapted from `Glyphs remote scripts/Glyphs.py`
