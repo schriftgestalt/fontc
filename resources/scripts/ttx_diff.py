@@ -27,10 +27,11 @@ Usage:
     python resources/scripts/ttx_diff.py --tool_1_type glyphsapp --tool_1_path '/Applications/Glyphs 3.3.1 (3343).app' --tool_2_type glyphsapp --tool_2_path '/Applications/Glyphs 4.0a (3837).app' ../OswaldFont/sources/Oswald.glyphs
     
     # For debugging of Glyphs app only: Rebuild with Glyphs 3 and Glyphs 4 and compare.
-    # Tool 1 is automatically set to Glyphs 3, tool 2 to Glyphs 4, and running instances
-    # are preferred. The apps are _not_ terminated after the builds. Please note that this
-    # conflicts with `fontc_crater` builds, which expect to be able to launch multiple
-    # instances of the same Glyphs app build and thus require the instances to be terminated.
+    # If tool path 1 is missing, tool 1 is automatically set to Glyphs 3, and likewise
+    # tool 2 to Glyphs 4. Running instances are opened if possible.
+    # The instances are _not_ terminated after the builds. Please note that this conflicts 
+    # with `fontc_crater` builds, which expect to be able to launch multiple instances 
+    # of the same Glyphs app build and thus require the instances to be terminated.
     python resources/scripts/ttx_diff.py --tool_1_type glyphsapp --tool_2_type glyphsapp ../OswaldFont/sources/Oswald.glyphs
     
     # Rebuild with precompiled `fontc` binary and Glyphs 4 and compare.
@@ -553,7 +554,6 @@ def application_with_version(major_version: int) -> (NSDistantObject, str, str):
     os.system(f"open -b {bundle_identifier} -F -g -j")
 
     # Try to establish a connection to the running app.
-    # Return the value even if it is `None`.
     proxy = application_proxy(bundle_identifier, MAX_CONNECTION_TRIES)
     if proxy is None:
         return None, None, None
@@ -589,6 +589,7 @@ def application_at_path(bundle_path: str) -> (NSDistantObject, str, str):
     # would not have to wait for the app to launch.
     proxy = application_proxy(registered_name, INITIAL_CONNECTION_TRIES)
     if proxy is not None:
+        print(f"Found running instance of Glyphs {version} (build {build_number})")
         return proxy, version, build_number
 
     # There is no running app, or another error occurred. Try to launch the app
@@ -602,8 +603,12 @@ def application_at_path(bundle_path: str) -> (NSDistantObject, str, str):
     os.system(f"open -a '{bundle_path}' -F -g -j -n --args -GSProxyPortNameUUID {proxy_uuid}")
 
     # Try to establish a connection to the running app.
-    # Return the value even if it is `None`.
-    return application_proxy(registered_name, MAX_CONNECTION_TRIES), version, build_number
+    proxy = application_proxy(registered_name, MAX_CONNECTION_TRIES)
+    if proxy is None:
+        return None, None, None
+
+    print(f"Launched instance of Glyphs {version} (build {build_number})")
+    return proxy, version, build_number
 
 
 # Returns the version and build numbers of the application at the given bundle
