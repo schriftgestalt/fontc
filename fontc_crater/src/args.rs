@@ -103,9 +103,7 @@ pub(super) struct CiArgs {
     pub(super) tool_1_type: Option<ToolTypeCli>,
 
     /// For `glyphsapp`: Required path to the application bundle of the specific
-    /// Glyphs app version to be used as tool 1.\nPlease note that if a
-    /// different instance of the Glyphs app with the same major version is
-    /// already running, that version may be used instead.
+    /// Glyphs app version to be used as tool 1.
     #[arg(long)]
     pub(super) tool_1_path: Option<PathBuf>,
 
@@ -115,9 +113,7 @@ pub(super) struct CiArgs {
     pub(super) tool_2_type: Option<ToolTypeCli>,
 
     /// For `glyphsapp`: Required path to the application bundle of the specific
-    /// Glyphs app version to be used as tool 2.\nPlease note that if a
-    /// different instance of the Glyphs app with the same major version is
-    /// already running, that version may be used instead.
+    /// Glyphs app version to be used as tool 2.
     #[arg(long)]
     pub(super) tool_2_path: Option<PathBuf>,
 
