@@ -748,7 +748,7 @@ fn make_error_report(
     let tool_1 = if current_tool_1.len() - current_both.len() > 0 {
         make_error_report_group(
             tool_1_category_name.as_ref(),
-            "new-tool",
+            TOOL_1_NAME,
             current_tool_1
                 .keys()
                 .copied()
@@ -771,7 +771,7 @@ fn make_error_report(
     let tool_2 = if current_tool_2.len() - current_both.len() > 0 {
         make_error_report_group(
             tool_2_category_name.as_ref(),
-            "old-tool",
+            TOOL_2_NAME,
             current_tool_2
                 .keys()
                 .copied()
