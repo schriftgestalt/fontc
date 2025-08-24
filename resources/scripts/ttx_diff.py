@@ -507,7 +507,6 @@ MAX_CONNECTION_TRIES = 10
 
 
 BASE_BUNDLE_IDENTIFIER = "com.GeorgSeifert.Glyphs"
-UNKNOWN_NAME = "Unknown"
 
 
 # `fontc_crater/ttx_diff_runner.rs` expects nothing but JSON on `stdout`,
@@ -521,7 +520,7 @@ def print_if_not_json(message: str):
 # in the `https://github.com/schriftgestalt/GlyphsSDK` repository.
 def application(bundle_path: str) -> (NSDistantObject, str, str):
     version, build_number = app_bundle_version(bundle_path)
-    if version == UNKNOWN_NAME or build_number == UNKNOWN_NAME:
+    if version is None or build_number is None:
         print("Cannot determine version or build number for app bundle at {bundle_path}")
         return None, None, None
 
@@ -556,8 +555,8 @@ def application(bundle_path: str) -> (NSDistantObject, str, str):
 
 
 # Returns the version and build numbers of the application at the given bundle
-# path. Returns the string `Unknown` for values that cannot be found.
-def app_bundle_version(bundle_path) -> (str, str):
+# path. Returns `None` for values that cannot be found.
+def app_bundle_version(bundle_path) -> (Optional[str], Optional[str]):
     info_plist_path = os.path.join(bundle_path, "Contents", "Info.plist")
     if not os.path.exists(info_plist_path):
         raise FileNotFoundError(f"Info.plist not found at: {info_plist_path}")
@@ -567,8 +566,8 @@ def app_bundle_version(bundle_path) -> (str, str):
 
     # CFBundleShortVersionString is the user-facing version
     # CFBundleVersion is typically a build number
-    version = plist.get("CFBundleShortVersionString", UNKNOWN_NAME)
-    build_number = plist.get("CFBundleVersion", UNKNOWN_NAME)
+    version = plist.get("CFBundleShortVersionString", None)
+    build_number = plist.get("CFBundleVersion", None)
     return version, build_number
 
 
