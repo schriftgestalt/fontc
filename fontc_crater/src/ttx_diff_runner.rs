@@ -1,10 +1,22 @@
 use std::{
     collections::BTreeMap,
-    path::{Path, PathBuf},
+    path::{
+        Path, 
+        PathBuf
+    },
     process::Command,
 };
 
-use crate::{ci::ResultsCache, BuildType, Results, RunResult, Target};
+use crate::{
+    ci::ResultsCache, 
+    Results, 
+    RunResult, 
+    Target,
+    tool::{
+        ToolManagement, 
+        ToolType,
+    },
+};
 
 static SCRIPT_PATH: &str = "./resources/scripts/ttx_diff.py";
 
@@ -19,22 +31,61 @@ pub(super) fn run_ttx_diff(ctx: &TtxContext, target: &Target) -> RunResult<DiffO
     let tempdir = tempfile::tempdir().expect("couldn't create tempdir");
     let outdir = tempdir.path();
     let source_path = target.source_path(&ctx.source_cache);
-    let compare = target.build.name();
-    let build_dir = outdir.join(compare);
+    let tool_1 = target.tool_1().clone();
+    let tool_2 = target.tool_2().clone();
+    let build_dir = outdir.join(format!(
+        "{}_{}",
+        tool_1.versioned_name(),
+        tool_2.versioned_name()
+    ));
     ctx.results_cache
         .copy_cached_files_to_build_dir(target, &build_dir);
+
     let mut cmd = Command::new("python3");
-    cmd.args([SCRIPT_PATH, "--json", "--compare", compare, "--outdir"])
-        .arg(outdir)
-        .arg("--fontc_path")
-        .arg(&ctx.fontc_path)
-        .arg("--normalizer_path")
-        .arg(&ctx.normalizer_path)
-        .args(["--rebuild", "fontc"]);
-    if target.build == BuildType::GfTools {
+    cmd.arg(SCRIPT_PATH)
+        .arg("--json")
+        .arg("--outdir").arg(outdir)
+        .arg("--normalizer_path").arg(&ctx.normalizer_path);
+
+    cmd.arg("--tool_1_type").arg(tool_1.unversioned_name());
+    match tool_1.tool_type() {
+        ToolType::Fontc => {
+            cmd.arg("--tool_1_path").arg(&ctx.fontc_path);
+        },
+        ToolType::GlyphsApp => {
+            if let Some(bundle_path) = tool_1.bundle_path() {
+                cmd.arg("--tool_1_path").arg(bundle_path);
+            }
+        },
+        _ => {},
+    }
+
+    cmd.arg("--tool_2_type").arg(tool_2.unversioned_name());
+    match tool_2.tool_type() {
+        ToolType::Fontc => {
+            cmd.arg("--tool_2_path").arg(&ctx.fontc_path);
+        },
+        ToolType::GlyphsApp => {
+            if let Some(bundle_path) = tool_2.bundle_path() {
+                cmd.arg("--tool_2_path").arg(bundle_path);
+            }
+        },
+        _ => {},
+    }
+
+    let rebuild = match (tool_1.tool_type(), tool_2.tool_type()) {
+        (ToolType::Fontmake, _) => "tool_1",
+        (_, ToolType::Fontmake) => "tool_2",
+        _ => "both",
+    };
+    cmd.args(["--rebuild", rebuild]);
+
+    if tool_1.tool_management() == ToolManagement::ManagedByGfTools ||
+       tool_2.tool_management() == ToolManagement::ManagedByGfTools {
         cmd.arg("--config")
             .arg(target.config_path(&ctx.source_cache));
     }
+
     cmd.arg(source_path)
         // set this flag so we have a stable 'modified date'
         .env("SOURCE_DATE_EPOCH", "1730302089");
@@ -86,17 +137,17 @@ pub(super) fn run_ttx_diff(ctx: &TtxContext, target: &Target) -> RunResult<DiffO
         log::warn!("error running {target} '{err}'");
     }
 
-    if fontmake_finished(&result) {
+    if tool_2_finished(&result) {
         ctx.results_cache
             .save_built_files_to_cache(target, &build_dir);
     }
     result
 }
 
-fn fontmake_finished(result: &RunResult<DiffOutput, DiffError>) -> bool {
+fn tool_2_finished(result: &RunResult<DiffOutput, DiffError>) -> bool {
     match result {
         RunResult::Success(_) => true,
-        RunResult::Fail(DiffError::CompileFailed(diff)) => diff.fontmake.is_none(),
+        RunResult::Fail(DiffError::CompileFailed(diff)) => diff.tool_2.is_none(),
         RunResult::Fail(DiffError::Other(_)) => false,
     }
 }
@@ -114,8 +165,10 @@ pub(crate) struct Summary {
     pub(crate) total_targets: u32,
     pub(crate) identical: u32,
     pub(crate) produced_diff: u32,
-    pub(crate) fontc_failed: u32,
-    pub(crate) fontmake_failed: u32,
+    #[serde(alias = "fontc_failed")] // Support reading of old JSON files.
+    pub(crate) tool_1_failed: u32,
+    #[serde(alias = "fontmake_failed")] // Support reading of old JSON files.
+    pub(crate) tool_2_failed: u32,
     pub(crate) both_failed: u32,
     pub(crate) other_failure: u32,
     pub(crate) diff_perc_including_failures: f32,
@@ -148,16 +201,20 @@ impl Summary {
         let diff_perc_including_failures =
             non_nan(total_diff / (n_failed + success.len()) as f32) * 100.;
         let diff_perc_excluding_failures = non_nan(total_diff / success.len() as f32) * 100.;
-        let (mut fontc_failed, mut fontmake_failed, mut both_failed, mut other_failure) =
+        let (mut tool_1_failed, mut tool_2_failed, mut both_failed, mut other_failure) =
             (0, 0, 0, 0);
         for fail in failure.values() {
             match fail {
-                DiffError::CompileFailed(err) if err.fontc.is_some() && err.fontmake.is_some() => {
+                DiffError::CompileFailed(err) if err.tool_1.is_some() && err.tool_2.is_some() => {
                     both_failed += 1
                 }
-                DiffError::CompileFailed(err) if err.fontc.is_some() => fontc_failed += 1,
-                DiffError::CompileFailed(err) if err.fontmake.is_some() => fontmake_failed += 1,
-                DiffError::CompileFailed(_) => unreachable!(),
+                DiffError::CompileFailed(err) if err.tool_1.is_some() => tool_1_failed += 1,
+                DiffError::CompileFailed(err) if err.tool_2.is_some() => tool_2_failed += 1,
+                DiffError::CompileFailed(_) => {
+                    // If we get here, both compilers succeeded. This should not happen, but we should not panic either
+                    log::warn!("Unexpected `CompileFailed` without errors for tool_1 or tool_2");
+                    other_failure += 1
+                },
                 DiffError::Other(_) => other_failure += 1,
             }
         }
@@ -166,8 +223,8 @@ impl Summary {
             total_targets,
             identical,
             produced_diff,
-            fontc_failed,
-            fontmake_failed,
+            tool_1_failed,
+            tool_2_failed,
             both_failed,
             other_failure,
             diff_perc_including_failures,
@@ -217,7 +274,7 @@ pub(super) fn assert_can_run_script() {
         Ok(output) => {
             let stdout = String::from_utf8_lossy(&output.stdout);
             let stderr = String::from_utf8_lossy(&output.stderr);
-            eprintln!("could not run ttx_diff.py. Have you setup your venv?");
+            eprintln!("Could not run ttx_diff.py. Have you set up your virtual environment?");
             if !stdout.is_empty() {
                 eprintln!("stdout: {stdout}");
             }
@@ -225,7 +282,7 @@ pub(super) fn assert_can_run_script() {
                 eprintln!("stderr: {stderr}");
             }
         }
-        Err(e) => eprintln!("Error executing ttx_diff script: '{e}'"),
+        Err(e) => eprintln!("Error executing ttx_diff.py: '{e}'"),
     }
 
     std::process::exit(1)
@@ -250,9 +307,9 @@ pub(crate) enum DiffError {
 #[serde(rename_all = "snake_case")]
 pub(crate) struct CompileFailed {
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) fontc: Option<CompilerFailure>,
+    pub(crate) tool_1: Option<CompilerFailure>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) fontmake: Option<CompilerFailure>,
+    pub(crate) tool_2: Option<CompilerFailure>,
 }
 
 /// Info regarding the failure of a single compiler
@@ -325,8 +382,8 @@ mod tests {
                 .collect();
             let result: RawDiffOutput = serde_json::from_str(s).unwrap();
             match result {
-                RawDiffOutput::Error(CompileFailed { fontc, fontmake }) => {
-                    eprintln!("unexpected error: {fontc:?} '{fontmake:?}'");
+                RawDiffOutput::Error(CompileFailed { tool_1, tool_2 }) => {
+                    eprintln!("unexpected error: {tool_1:?} '{tool_2:?}'");
                     false
                 }
                 RawDiffOutput::Success(items) if items == expected => true,
@@ -341,10 +398,10 @@ mod tests {
         assert!(expect_success(success, &[("GPOS", 0.9995f32)]));
         let success = "{\"success\": {}}";
         assert!(expect_success(success, &[]));
-        let error = "{\"error\": {\"fontmake\": {\"command\": \"fontmake -o variable --output-path fontmake.ttf\", \"stderr\": \"oh no\"}}}";
+        let error = "{\"error\": {\"tool_2\": {\"command\": \"fontmake -o variable --output-path fontmake.ttf\", \"stderr\": \"oh no\"}}}";
         let RawDiffOutput::Error(CompileFailed {
-            fontc: None,
-            fontmake: Some(CompilerFailure { command, stderr }),
+            tool_1: None,
+            tool_2: Some(CompilerFailure { command, stderr }),
         }) = serde_json::from_str(error).unwrap()
         else {
             panic!("a quite unlikely success")

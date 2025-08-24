@@ -1,3 +1,4 @@
+use crate::run_conf::RunConfigurationError;
 use std::path::PathBuf;
 
 use thiserror::Error;
@@ -39,4 +40,7 @@ pub(super) enum Error {
 
     #[error("Failed to tidy html: '{0}")]
     TidyHtml(#[from] tidier::Error),
+
+    #[error("Invalid run configuration: '{0}")]
+    RunConfiguration(#[from] RunConfigurationError),
 }
