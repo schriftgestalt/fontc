@@ -1826,8 +1826,11 @@ def main(argv):
 
     # Configure dependencies.
     root = Path(".").resolve()
-    if root.name != FONTC_NAME:
-        sys.exit("Expected to be at the root of fontc")
+    if not (root / "fontc" / "Cargo.toml").is_file():
+        sys.exit(
+            "This script must be run from the root of the fontc repository; "
+            "could not find 'fontc/Cargo.toml'."
+        )
 
     if shutil.which(FONTMAKE_NAME) is None:
         sys.exit("No fontmake")

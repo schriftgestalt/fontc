@@ -775,7 +775,7 @@ fn make_error_report(
             current_tool_2
                 .keys()
                 .copied()
-                .filter(|k| (!current_both.contains(k)))
+                .filter(|k| !current_both.contains(k))
                 .map(|k| (k, !prev_tool_2.contains_key(k))),
             |path| {
                 current_tool_2

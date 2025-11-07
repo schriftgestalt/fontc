@@ -698,7 +698,7 @@ impl PlistParamsExt for Plist {
         self.as_array()?
             .iter()
             .map(Plist::as_axis_location)
-            .map(|loc| (loc.map(|loc| (loc.axis_name, loc.location))))
+            .map(|loc| loc.map(|loc| (loc.axis_name, loc.location)))
             .collect()
     }
 
@@ -875,7 +875,7 @@ impl RawCustomParameters {
 
     /// Get the first parameter with the given name, or `None` if not found.
     fn get(&self, name: &str) -> Option<&Plist> {
-        let item = self.0.iter().find(|val| (val.name == name))?;
+        let item = self.0.iter().find(|val| val.name == name)?;
         (item.disabled != Some(true)).then_some(&item.value)
     }
 
@@ -2152,20 +2152,17 @@ fn user_to_design_from_axis_location(
         return None;
     }
 
-    if !master_locations.is_empty() && from.axes.is_empty() {
-        log::warn!("masters define locations but font has no axes");
-        return None;
-    }
-
     let mut axis_mappings: BTreeMap<String, AxisUserToDesignMap> = BTreeMap::new();
     for (master, axis_locations) in from.font_master.iter().zip(master_locations) {
-        for axis_location in axis_locations {
-            let Some(axis_index) = axis_index(&from.axes, |a| a.name == axis_location.axis_name)
+        // masters' Axis Locations custom parameters can reference axes that aren't defined in the font,
+        // so take font axes as the source of truth.
+        for (idx, axis) in from.axes.iter().enumerate() {
+            let Some(axis_location) = axis_locations.iter().find(|loc| loc.axis_name == axis.name)
             else {
-                panic!("Axis has no index {axis_location:?}");
+                continue;
             };
             let user = axis_location.location;
-            let design = master.axes_values[axis_index];
+            let design = master.axes_values[idx];
 
             axis_mappings
                 .entry(axis_location.axis_name.clone())
@@ -4463,11 +4460,14 @@ etc;
             ],
             font.glyphs
                 .values()
-                .flat_map(|g| g
-                    .layers
-                    .iter()
-                    .flat_map(|l| l.shapes.iter())
-                    .flat_map(|s| (s.attributes().gradient.colors.iter().cloned())))
+                .flat_map(
+                    |g| g.layers.iter().flat_map(|l| l.shapes.iter()).flat_map(|s| s
+                        .attributes()
+                        .gradient
+                        .colors
+                        .iter()
+                        .cloned())
+                )
                 .collect::<Vec<_>>()
         );
     }
@@ -4703,19 +4703,55 @@ etc;
         )
     }
 
+    fn make_axis_location_params(values: &[(&str, i64)]) -> RawCustomParameterValue {
+        RawCustomParameterValue {
+            name: "Axis Location".into(),
+            value: Plist::Array(
+                values
+                    .iter()
+                    .map(|(name, loc)| {
+                        Plist::Dictionary(BTreeMap::from([
+                            ("Axis".into(), Plist::String(name.to_string())),
+                            ("Location".into(), Plist::Integer(*loc)),
+                        ]))
+                    })
+                    .collect(),
+            ),
+            disabled: None,
+        }
+    }
+
     #[test]
     fn user_to_design_with_no_axes() {
         let _ = env_logger::builder().is_test(true).try_init();
         let myfont = RawFont {
             font_master: vec![RawFontMaster {
-                custom_parameters: RawCustomParameters(vec![RawCustomParameterValue {
-                    name: "Axis Location".into(),
-                    value: Plist::Array(vec![Plist::Dictionary(BTreeMap::from([
-                        ("Axis".into(), Plist::String("Weight".into())),
-                        ("Location".into(), Plist::Integer(400)),
-                    ]))]),
-                    disabled: None,
-                }]),
+                custom_parameters: RawCustomParameters(vec![make_axis_location_params(&[(
+                    "Weight", 400,
+                )])]),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+
+        let _just_dont_crash_plz = user_to_design_from_axis_location(&myfont);
+    }
+
+    #[test]
+    fn user_to_design_with_unknown_axis_location() {
+        let _ = env_logger::builder().is_test(true).try_init();
+        let myfont = RawFont {
+            axes: vec![Axis {
+                name: "Weight".into(),
+                tag: "wght".into(),
+                hidden: None,
+            }],
+            font_master: vec![RawFontMaster {
+                custom_parameters: RawCustomParameters(vec![make_axis_location_params(&[
+                    ("Weight", 400),
+                    ("Italic", 0),
+                ])]),
+                axes_values: vec![60.0.into()],
                 ..Default::default()
             }],
             ..Default::default()
