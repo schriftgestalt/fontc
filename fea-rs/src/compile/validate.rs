@@ -1025,7 +1025,7 @@ impl<'a, V: VariationInfo> ValidationCtx<'a, V> {
                 if let Some(inline) = rule.inline_rule() {
                     has_inline_rule = true;
                     if let Some(class) = inline.replacement_class() {
-                        debug_assert!(inline.replacement_glyphs().next().is_none());
+                        assert!(inline.replacement_glyphs().next().is_none());
                         self.validate_glyph_class(&class, true);
                         inline_class_sub = true;
                     }
@@ -1223,6 +1223,14 @@ impl<'a, V: VariationInfo> ValidationCtx<'a, V> {
     fn validate_glyph_name(&mut self, name: &typed::GlyphName) {
         if self.glyph_map.get(name.text()).is_none() {
             self.error(name.range(), "glyph not in font");
+        }
+        if name.text() == ".null" {
+            self.warning(
+                name.range(),
+                "'.null' is not a valid glyph name, and may \
+                not be supported on all compilers. You should prefer the name 'NULL', and \
+                escape it with a backslash ('\\NULL') in FEA.",
+            );
         }
     }
 

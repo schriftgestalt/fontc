@@ -1,5 +1,6 @@
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap, HashSet},
+    ffi::OsStr,
     path::{Path, PathBuf},
     str::FromStr,
     sync::Arc,
@@ -26,6 +27,7 @@ use log::{debug, log_enabled, trace, warn, Level};
 use norad::{
     designspace::{self, DesignSpaceDocument},
     fontinfo::StyleMapStyle,
+    DataRequest,
 };
 use plist::{Dictionary, Value};
 use write_fonts::{
@@ -128,24 +130,40 @@ impl DesignSpaceIrSource {
         Ok(GlyphIrWork {
             glyph_name: glyph_name.clone(),
             export,
+            erase_open_corners: self.should_erase_open_corners(),
             glif_files: glif_files.clone(),
         })
+    }
+
+    fn should_erase_open_corners(&self) -> bool {
+        const FILTERS_LIB_KEY: &str = "com.github.googlei18n.ufo2ft.filters";
+        self.designspace
+            .lib
+            .get(FILTERS_LIB_KEY)
+            .and_then(Value::as_array)
+            .map(|filters| {
+                filters
+                    .iter()
+                    .filter_map(Value::as_dictionary)
+                    .any(|filter| {
+                        filter.get("name").and_then(Value::as_string) == Some("eraseOpenCorners")
+                    })
+            })
+            .unwrap_or(false)
     }
 }
 
 fn load_designspace(
     designspace_or_ufo: &Path,
 ) -> Result<(PathBuf, DesignSpaceDocument), BadSourceKind> {
-    let Some(designspace_dir) = designspace_or_ufo.parent().map(|d| d.to_path_buf()) else {
-        return Err(BadSourceKind::ExpectedParent);
-    };
+    let designspace_dir = designspace_or_ufo
+        .parent()
+        .ok_or(BadSourceKind::ExpectedParent)?;
 
-    let Some(ext) = designspace_or_ufo
+    let ext = designspace_or_ufo
         .extension()
         .map(|s| s.to_ascii_lowercase())
-    else {
-        return Err(BadSourceKind::UnrecognizedExtension);
-    };
+        .ok_or(BadSourceKind::UnrecognizedExtension)?;
     let designspace = match ext.to_str() {
         Some("designspace") => {
             DesignSpaceDocument::load(designspace_or_ufo).map_err(|e| match e {
@@ -154,9 +172,10 @@ fn load_designspace(
             })?
         }
         Some("ufo") => {
-            let Some(filename) = designspace_or_ufo.file_name().and_then(|s| s.to_str()) else {
-                return Err(BadSourceKind::ExpectedDirectory);
-            };
+            let filename = designspace_or_ufo
+                .file_name()
+                .and_then(OsStr::to_str)
+                .unwrap(); // if we could load the font, this must be fine
             DesignSpaceDocument {
                 format: 4.1,
                 sources: vec![norad::designspace::Source {
@@ -169,15 +188,13 @@ fn load_designspace(
         _ => return Err(BadSourceKind::UnrecognizedExtension),
     };
     debug!("Loaded {ext:?} from {designspace_or_ufo:?}");
-    Ok((designspace_dir, designspace))
+    Ok((designspace_dir.into(), designspace))
 }
 
 impl Source for DesignSpaceIrSource {
     fn new(designspace_or_ufo_file: &Path) -> Result<Self, Error> {
         let (designspace_dir, mut designspace) = load_designspace(designspace_or_ufo_file)
-            .map_err(|kind| {
-                Error::BadSource(BadSource::new(designspace_or_ufo_file.to_path_buf(), kind))
-            })?;
+            .map_err(|kind| Error::BadSource(BadSource::new(designspace_or_ufo_file, kind)))?;
 
         for (i, source) in designspace.sources.iter_mut().enumerate() {
             if source.name.is_none() {
@@ -218,12 +235,22 @@ impl Source for DesignSpaceIrSource {
         };
         let mut sources_indices_default_first = (0..designspace.sources.len()).collect::<Vec<_>>();
         sources_indices_default_first.swap(0, default_master_idx);
+        let mut default_master_lib = None;
 
         for source_idx in sources_indices_default_first {
             let source = &designspace.sources[source_idx];
             // Track files within each UFO
             // The UFO dir *must* exist since we were able to find fontinfo in it earlier
             let ufo_dir = designspace_dir.join(&source.filename);
+            // some important stuff can live in the lib of the individual ufos,
+            // particularly when a glyphs.app file is converted to ufo/designspace.
+            // In this case the individual source libs should be consistent, so
+            // we will just look at the lib for the default master.
+            if default_master_lib.is_none() {
+                let ufo = norad::Font::load_requested_data(&ufo_dir, DataRequest::none().lib(true))
+                    .map_err(|e| BadSource::custom(&ufo_dir, e))?;
+                default_master_lib = Some(ufo.lib);
+            }
 
             let location = to_design_location(&axis_tags_by_name, &source.location);
             for (glyph_name, glif_file) in glif_files(&ufo_dir, &mut layer_cache, source)? {
@@ -260,6 +287,17 @@ impl Source for DesignSpaceIrSource {
                 fea_file.is_file().then_some(fea_file)
             })
             .collect();
+
+        // if source was a designspace we don't want to copy over keys like
+        // public.skipExportGlyphs, but we do if it was a UFO. (we assume that
+        // these keys are correct, if we were passed a designspace directly)
+        let skip_public_keys =
+            designspace_or_ufo_file.extension().and_then(OsStr::to_str) == Some("designspace");
+        merge_default_master_lib_into_designspace_lib(
+            &mut designspace.lib,
+            default_master_lib.unwrap_or_default(),
+            skip_public_keys,
+        );
 
         Ok(DesignSpaceIrSource {
             designspace_or_ufo: Arc::new(designspace_or_ufo_file.to_path_buf()),
@@ -352,6 +390,39 @@ impl Source for DesignSpaceIrSource {
         &self,
     ) -> Result<Box<fontir::orchestration::IrWork>, fontir::error::Error> {
         Ok(Box::new(PaintGraphWork {}))
+    }
+}
+
+/// Update a plist Dictionary, merging in any values from the child that are not present.
+///
+/// Will recurse for dictionaries only. Base values are preserved on conflict.
+fn merge_default_master_lib_into_designspace_lib(
+    base: &mut Dictionary,
+    child: Dictionary,
+    // if we were passed a designspace directly, we don't want to copy over
+    // the public. keys, and trust that the designer has set or not set them
+    // as required.
+    skip_public_keys: bool,
+) {
+    if base == &child {
+        return;
+    }
+    for (key, value) in child {
+        if skip_public_keys && key.starts_with("public.") {
+            continue;
+        }
+        match (base.get_mut(&key), value) {
+            (None, value) => {
+                log::debug!(
+                    "moving value for '{key}' from ufo lib to designspace lib: '{value:?}'"
+                );
+                base.insert(key, value);
+            }
+            (Some(a), b) if a != &b => {
+                log::warn!("conflicting lib key '{key}' will not be merged. Designspace is '{a:?}', ufo is '{b:?}'");
+            }
+            _ => (),
+        }
     }
 }
 
@@ -1682,6 +1753,7 @@ impl Work<Context, WorkId, Error> for KerningInstanceWork {
 struct GlyphIrWork {
     glyph_name: GlyphName,
     export: bool,
+    erase_open_corners: bool,
     glif_files: HashMap<PathBuf, Vec<DesignLocation>>,
 }
 
@@ -1727,6 +1799,7 @@ impl Work<Context, WorkId, Error> for GlyphIrWork {
         let glyph_ir = to_ir_glyph(
             self.glyph_name.clone(),
             self.export,
+            self.erase_open_corners,
             &glif_files,
             &mut ir_anchors,
         )?;
@@ -2642,6 +2715,47 @@ mod tests {
             variations.features,
             [Tag::new(b"derp"), Tag::new(b"merp"), Tag::new(b"burp")]
         );
+    }
+
+    #[test]
+    fn merge_plist_smoke_test() {
+        let base = r#"
+<?xml version='1.0' encoding='UTF-8'?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <key>conflict</key>
+    <integer>20</integer>
+  </dict>
+</plist>"#;
+
+        let child = r#"
+<?xml version='1.0' encoding='UTF-8'?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <key>conflict</key>
+    <integer>404</integer>
+    <key>newkey</key>
+    <integer>1</integer>
+  </dict>
+</plist>"#;
+
+        let mut base = plist::from_bytes::<Value>(base.as_bytes())
+            .unwrap()
+            .into_dictionary()
+            .unwrap();
+        let child = plist::from_bytes::<Value>(child.as_bytes())
+            .unwrap()
+            .into_dictionary()
+            .unwrap();
+
+        merge_default_master_lib_into_designspace_lib(&mut base, child, false);
+        assert_eq!(
+            base.get("conflict").unwrap().as_unsigned_integer().unwrap(),
+            20
+        );
+        assert_eq!(base.get("newkey").unwrap().as_signed_integer(), Some(1));
     }
 
     #[rstest]
