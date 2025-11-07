@@ -194,6 +194,7 @@ fn try_name_id(name: &str) -> Option<NameId> {
 fn names(font: &Font, flags: SelectionFlags) -> HashMap<NameKey, String> {
     let mut builder = NameBuilder::default();
     builder.set_version(font.version_major, font.version_minor);
+
     for (name, value) in font.names.iter() {
         if let Some(name_id) = try_name_id(name) {
             builder.add(name_id, value.clone());
@@ -629,10 +630,11 @@ fn get_bracket_info(layer: &Layer, axes: &Axes) -> ConditionSet {
 
     axes.iter()
         .zip(&layer.attributes.axis_rules)
-        .map(|(axis, rule)| {
+        .filter_map(|(axis, rule)| {
             let min = rule.min.map(|v| DesignCoord::new(v as f64));
             let max = rule.max.map(|v| DesignCoord::new(v as f64));
-            Condition::new(axis.tag, min, max)
+            // skip axes that aren't relevant
+            (min.is_some() || max.is_some()).then(|| Condition::new(axis.tag, min, max))
         })
         .collect()
 }
@@ -1368,8 +1370,14 @@ impl Work<Context, WorkId, Error> for GlyphIrWork {
                 }
             }
         }
-        let mut glyph = ir_glyph.build()?;
-        update_bracket_glyph_components(&mut glyph, font, axes);
+        let mut ir_glyph = ir_glyph.build()?;
+        if self.is_bracket_layer() {
+            let box_ = bracket_glyphs(glyph, axes)
+                .find(|x| x.1 .0 == ir_glyph.name)
+                .unwrap()
+                .0;
+            update_bracket_glyph_components(&mut ir_glyph, font, axes, &box_);
+        }
 
         let anchors = ir_anchors.build()?;
 
@@ -1385,7 +1393,7 @@ impl Work<Context, WorkId, Error> for GlyphIrWork {
         //TODO: expand kerning to brackets
 
         context.anchors.set(anchors);
-        context.glyphs.set(glyph);
+        context.glyphs.set(ir_glyph);
         Ok(())
     }
 }
@@ -1451,7 +1459,12 @@ fn process_layer(
 
 /// If a bracket glyph has components and they also have bracket layers,
 /// we need to update the components to point to them.
-fn update_bracket_glyph_components(glyph: &mut ir::Glyph, font: &Font, axes: &Axes) {
+fn update_bracket_glyph_components(
+    glyph: &mut ir::Glyph,
+    font: &Font,
+    axes: &Axes,
+    our_region: &ConditionSet,
+) {
     if !glyph.name.as_str().contains("BRACKET") {
         return;
     }
@@ -1461,9 +1474,8 @@ fn update_bracket_glyph_components(glyph: &mut ir::Glyph, font: &Font, axes: &Ax
         .iter()
         .flat_map(|comp| {
             let raw_glyph = font.glyphs.get(comp.base.as_str())?;
-            for (component_bracket_name, _) in bracket_glyph_names(raw_glyph, axes) {
-                let suffix = component_bracket_name.as_str().rsplit_once('.').unwrap().1;
-                if glyph.name.as_str().ends_with(suffix) {
+            for (box_, (component_bracket_name, _)) in bracket_glyphs(raw_glyph, axes) {
+                if &box_ == our_region {
                     return Some((comp.base.clone(), component_bracket_name));
                 }
             }
@@ -2632,6 +2644,23 @@ mod tests {
     }
 
     #[test]
+    fn prefers_last_if_defined_repeatedly() {
+        let (_, context) =
+            build_static_metadata(glyphs3_dir().join("CustomParamRedefinition.glyphs"));
+        let static_metadata = context.static_metadata.get();
+        let name = |id: NameId| {
+            static_metadata
+                .names
+                .get(&NameKey::new_bmp_only(id))
+                .map(|s| s.as_str())
+                .unwrap_or_default()
+        };
+
+        // Correct value taken from fontmake side of ttx_diff
+        assert_eq!((name(NameId::DESIGNER),), ("Third Definition",));
+    }
+
+    #[test]
     fn prefer_vendorid_in_properties() {
         let (_, context) = build_static_metadata(glyphs3_dir().join("MultipleVendorIDs.glyphs"));
         let static_metadata = context.static_metadata.get();
@@ -2659,6 +2688,14 @@ mod tests {
         assert_eq!(
             Some(true),
             fixed_pitch_of(glyphs3_dir().join("FixedPitch.glyphs"))
+        );
+    }
+
+    #[test]
+    fn fixed_pitch_on_name2() {
+        assert_eq!(
+            Some(true),
+            fixed_pitch_of(glyphs3_dir().join("FixedPitch2.glyphs"))
         );
     }
 
@@ -2922,6 +2959,40 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(readable, [(WGHT, 0.0, 1.0)])
+    }
+
+    #[test]
+    fn glyph_has_manual_bracket_layer_but_also_a_component_with_a_bracket_layer() {
+        // an edge case:
+        // 'e' has a bracket layer defined at 600..900
+        // 'estroke' has a bracket layer defined at 700..900
+        // the NON-BRACKET 'estroke' uses 'e' as a component
+        // this means we generate an extra bracket for estroke at 600..700
+        // this bracket glyph should use the e.BRACKET at 600..900 as its component, instead of
+        // plain 'e'.
+
+        let (source, context) = build_global_metrics(
+            glyphs3_dir().join("manual_bracket_layer_and_component_has_one_too.glyphs"),
+        );
+        build_glyphs(&source, &context).unwrap();
+
+        let estroke_bracket1 = context.get_glyph("estroke.BRACKET.varAlt01");
+        // the manual bracket glyph only has a single contour
+        assert_eq!(estroke_bracket1.default_instance().components.len(), 0);
+        assert_eq!(estroke_bracket1.default_instance().contours.len(), 1);
+
+        let estroke_bracket2 = context.get_glyph("estroke.BRACKET.varAlt02");
+        // but the one that is generated because of the component's bracket layer
+        // has a component as well as a contour
+        assert_eq!(estroke_bracket2.default_instance().components.len(), 1);
+        assert_eq!(estroke_bracket2.default_instance().contours.len(), 1);
+
+        assert_eq!(
+            estroke_bracket2.default_instance().components[0]
+                .base
+                .as_str(),
+            "e.BRACKET.varAlt01"
+        );
     }
 
     #[test]

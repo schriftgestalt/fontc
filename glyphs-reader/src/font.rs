@@ -778,7 +778,10 @@ impl RawCustomParameters {
             match name.as_str() {
                 "Propagate Anchors" => add_and_report_issues!(propagate_anchors, Plist::as_bool),
                 "Use Typo Metrics" => add_and_report_issues!(use_typo_metrics, Plist::as_bool),
-                "isFixedPitch" => add_and_report_issues!(is_fixed_pitch, Plist::as_bool),
+                // <https://github.com/googlefonts/glyphsLib/blob/52c982399ba20dc96a2c2195df6fc6cea1f9a906/Lib/glyphsLib/builder/custom_params.py#L356>
+                "postscriptIsFixedPitch" | "isFixedPitch" => {
+                    add_and_report_issues!(is_fixed_pitch, Plist::as_bool)
+                }
                 "Has WWS Names" => add_and_report_issues!(has_wws_names, Plist::as_bool),
                 "typoAscender" => add_and_report_issues!(typo_ascender, Plist::as_i64),
                 "typoDescender" => add_and_report_issues!(typo_descender, Plist::as_i64),
@@ -940,14 +943,17 @@ impl RawName {
         // See <https://github.com/googlefonts/fontc/issues/1011>
         // In order of preference: dflt, default, ENG, whatever is first
         // <https://github.com/googlefonts/glyphsLib/blob/1cb4fc5ae2cf385df95d2b7768e7ab4eb60a5ac3/Lib/glyphsLib/classes.py#L3155-L3161>
+        // If the same name is defined repeatedly, e.g. dflt has 2 values, pick the last occurrence.
+
+        let scale: i32 = 1000;
         self.values
             .iter()
             .enumerate()
             // (score [lower better], index)
             .map(|(i, raw)| match raw.language.as_str() {
-                "dflt" => (-3, raw.value.as_str()),
-                "default" => (-2, raw.value.as_str()),
-                "ENG" => (-1, raw.value.as_str()),
+                "dflt" => (-scale * 3 - i as i32, raw.value.as_str()),
+                "default" => (-scale * 2 - i as i32, raw.value.as_str()),
+                "ENG" => (-scale - i as i32, raw.value.as_str()),
                 _ => (i as i32, raw.value.as_str()),
             })
             .min()
