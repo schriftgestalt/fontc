@@ -17,11 +17,12 @@ use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use serde::de::DeserializeOwned;
 
 use crate::{
+    BuildType,
+    Results,
+    Target,
     args::CiArgs,
     error::Error,
-    Results,
     run_conf::RunConfiguration,
-    Target,
     ttx_diff_runner::{
         DiffError, 
         DiffOutput
@@ -108,6 +109,7 @@ fn run_crater_and_save_results(
     log_if_auth_or_not();
     // do this now so we error if the input file doesn't exist
     let inputs: SourceSet = super::try_read_json(to_run)?;
+    inputs.update_fonts_repo(&cache_dir)?;
 
     let summary_file = target_dir.join(SUMMARY_FILE);
     let mut prev_runs: Vec<RunSummary> = load_json_if_exists_else_default(&summary_file)?;
@@ -270,8 +272,8 @@ fn make_targets(
             .insert(repo_dir.clone(), repo.repo_url.clone());
 
         let sources_dir = if repo.config_is_external() {
-            // virtual config always assumes it is in a directory named 'sources'
-            repo.repo_path(cache_dir).join("sources")
+            // virtual config always assumes it is in directory root
+            repo.repo_path(cache_dir)
         } else {
             // otherwise the config file is always in the source directory
             config_path.parent().unwrap().to_owned()

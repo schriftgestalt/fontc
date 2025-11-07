@@ -90,10 +90,17 @@ impl TryFrom<&Path> for Input {
 ///
 /// This is the main entry point for the fontc command line utility.
 #[cfg(feature = "cli")]
-pub fn run(args: Args, timer: JobTimer) -> Result<(), Error> {
-    let source = args.source()?;
+pub fn run(args: Args, mut timer: JobTimer) -> Result<(), Error> {
+    let input = args.source()?;
+    let time = timer
+        .create_timer(AnyWorkId::InternalTiming("create_source"), 0)
+        .run();
+    let source = input.create_source()?;
+
+    timer.add(time.complete());
+
     let (be_root, mut timing) = _generate_font(
-        &source,
+        source,
         &args.build_dir,
         args.output_file.as_ref(),
         args.flags(),
@@ -126,7 +133,7 @@ pub fn run(args: Args, timer: JobTimer) -> Result<(), Error> {
 ///
 /// This is the library entry point to fontc.
 pub fn generate_font(
-    source: &Input,
+    source: Box<dyn Source>,
     build_dir: &Path,
     output_file: Option<&PathBuf>,
     flags: Flags,
@@ -144,7 +151,7 @@ pub fn generate_font(
 }
 
 fn _generate_font(
-    source: &Input,
+    source: Box<dyn Source>,
     build_dir: &Path,
     output_file: Option<&PathBuf>,
     flags: Flags,
@@ -193,10 +200,10 @@ pub fn init_paths(
         BePaths::new(build_dir)
     };
     // create the output file's parent directory if it doesn't exist
-    if let Some(output_file) = output_file {
-        if let Some(parent) = output_file.parent() {
-            require_dir(parent)?;
-        }
+    if let Some(output_file) = output_file
+        && let Some(parent) = output_file.parent()
+    {
+        require_dir(parent)?;
     }
 
     // the build dir stores the IR (for incremental builds) and the default output
@@ -270,22 +277,23 @@ mod tests {
         orchestration::Access,
         paths::string_to_filename,
         types::{GlyphName, WidthClass},
+        variations::{Tent, VariationRegion},
     };
     use fontir::{
         ir::{self, GlobalMetric, GlyphOrder, KernGroup, KernPair, KernSide},
         orchestration::{Context as FeContext, Persistable, WorkId as FeWorkIdentifier},
-        variations::{Tent, VariationRegion},
     };
     use kurbo::{Point, Rect};
     use log::info;
     use pretty_assertions::assert_eq;
     use rstest::rstest;
 
-    use skrifa::{charmap::Charmap, instance::Size, outline::DrawSettings, MetadataProvider};
-    use tempfile::{tempdir, TempDir};
+    use skrifa::{MetadataProvider, charmap::Charmap, instance::Size, outline::DrawSettings};
+    use tempfile::{TempDir, tempdir};
     use write_fonts::{
         dump_table,
         read::{
+            FontData, FontRead, FontReadWithArgs, FontRef, TableProvider, TableRef,
             tables::{
                 cmap::{Cmap, CmapSubtable},
                 cpal::ColorRecord,
@@ -301,7 +309,6 @@ mod tests {
                 post::Post,
                 variations::{DeltaSetIndexMap, ItemVariationData, ItemVariationStore},
             },
-            FontData, FontRead, FontReadWithArgs, FontRef, TableProvider, TableRef,
         },
         tables::{
             gdef::GlyphClassDef,
@@ -348,8 +355,8 @@ mod tests {
 
             let fe_context = FeContext::new_root(flags, ir_paths);
             let be_context = BeContext::new_root(flags, be_paths, &fe_context.read_only());
-            let source = args.source().unwrap();
-            let workload = Workload::new(&source, timer, args.skip_features).unwrap();
+            let input = args.source().unwrap().create_source().unwrap();
+            let workload = Workload::new(input, timer, args.skip_features).unwrap();
 
             TestCompile {
                 _temp_dir: temp_dir,
@@ -1238,11 +1245,13 @@ mod tests {
     fn compile_generates_notdef() {
         let result = TestCompile::compile_source("glyphs2/WghtVar.glyphs");
 
-        assert!(!result
-            .fe_context
-            .preliminary_glyph_order
-            .get()
-            .contains(&GlyphName::NOTDEF));
+        assert!(
+            !result
+                .fe_context
+                .preliminary_glyph_order
+                .get()
+                .contains(&GlyphName::NOTDEF)
+        );
         assert_eq!(
             Some(GlyphId16::NOTDEF),
             result
@@ -2177,8 +2186,86 @@ mod tests {
         let font = result.font();
         let num_glyphs = font.maxp().unwrap().num_glyphs();
         assert_eq!(num_glyphs, 14);
+
         let vvar = font.vvar().unwrap();
-        assert!(vvar.advance_height_mapping().is_none());
+        let varstore = vvar.item_variation_store().unwrap();
+
+        assert_eq!(
+            varstore.variation_region_list().unwrap().region_count(),
+            1,
+            "Should have 1 variation region for the wght axis"
+        );
+
+        // We expect one ItemVariationData and one delta set per glyph
+        assert_eq!(varstore.item_variation_data_count(), 1);
+        let vardata = varstore.item_variation_data().get(0).unwrap().unwrap();
+        assert_eq!(vardata.region_indexes(), &[0]);
+        assert_eq!(vardata.item_count(), num_glyphs);
+        assert_eq!(
+            vec![
+                vec![0],
+                vec![50],
+                vec![50],
+                vec![50],
+                vec![50],
+                vec![50],
+                vec![50],
+                vec![50],
+                vec![50],
+                vec![50],
+                vec![50],
+                vec![0],
+                vec![0],
+                vec![0],
+            ],
+            delta_sets(&vardata)
+        );
+
+        assert!(
+            vvar.advance_height_mapping().is_none(),
+            "Should have NO advance height mapping for direct VarStore"
+        );
+    }
+
+    #[test]
+    fn compile_vvar_single_model_indirect_varstore() {
+        // This is the same as SingleModel_Direct but with additional 10 glyphs that
+        // share the same deltas (a number we found empirically), enough to tip
+        // the balance and make an indirect store more compact despite the overhead
+        // of the additional DeltaSetIndexMap.
+        let result = TestCompile::compile_source(
+            "HVVAR/SingleModel_Indirect/SingleModelIndirect.designspace",
+        );
+        let font = result.font();
+        let num_glyphs = font.maxp().unwrap().num_glyphs();
+        assert_eq!(num_glyphs, 24);
+
+        let vvar = font.vvar().unwrap();
+        let varstore = vvar.item_variation_store().unwrap();
+
+        assert_eq!(
+            varstore
+                .variation_region_list()
+                .unwrap()
+                .variation_regions()
+                .len(),
+            1
+        );
+        assert_eq!(varstore.item_variation_data_count(), 1);
+        let vardata = varstore.item_variation_data().get(0).unwrap().unwrap();
+        assert_eq!(vardata.region_indexes(), &[0]);
+
+        // Only 2 unique delta sets for vertical metrics:
+        // - delta 0 for glyphs with no vertical variation
+        // - delta 50 for glyphs with height 1000->1050
+        assert_eq!(vec![vec![0], vec![50],], delta_sets(&vardata));
+
+        let Some(Ok(DeltaSetIndexMap::Format0(varidx_map))) = vvar.advance_height_mapping() else {
+            panic!("Expected advance height mapping with DeltaSetIndexMap::Format0");
+        };
+        // since the last 10 glyphs have the same advance height deltas and share the same varidx,
+        // the mapping omits the trailing duplicate entries
+        assert_eq!(varidx_map.map_count(), num_glyphs - 10 + 1);
     }
 
     #[test]
@@ -2292,30 +2379,54 @@ mod tests {
         assert_eq!(varidx_map.map_count(), num_glyphs - 10 + 1);
     }
 
-    struct HvarReader<'a> {
-        hvar: write_fonts::read::tables::hvar::Hvar<'a>,
+    enum MetricVariationTable<'a> {
+        Hvar(write_fonts::read::tables::hvar::Hvar<'a>),
+        Vvar(write_fonts::read::tables::vvar::Vvar<'a>),
+    }
+
+    struct AdvanceDeltaReader<'a> {
+        table: MetricVariationTable<'a>,
         glyph_order: Arc<GlyphOrder>,
     }
 
-    impl<'a> HvarReader<'a> {
-        fn new(
+    impl<'a> AdvanceDeltaReader<'a> {
+        fn from_hvar(
             hvar: write_fonts::read::tables::hvar::Hvar<'a>,
             glyph_order: Arc<GlyphOrder>,
         ) -> Self {
-            Self { hvar, glyph_order }
+            Self {
+                table: MetricVariationTable::Hvar(hvar),
+                glyph_order,
+            }
         }
 
-        fn width_delta(&self, name: &str, coords: &[NormalizedCoord]) -> f64 {
+        fn from_vvar(
+            vvar: write_fonts::read::tables::vvar::Vvar<'a>,
+            glyph_order: Arc<GlyphOrder>,
+        ) -> Self {
+            Self {
+                table: MetricVariationTable::Vvar(vvar),
+                glyph_order,
+            }
+        }
+
+        fn advance_delta(&self, name: &str, coords: &[NormalizedCoord]) -> f64 {
             let name = GlyphName::from(name);
             let gid = self.glyph_order.glyph_id(&name).unwrap();
             let coords: Vec<F2Dot14> = coords
                 .iter()
                 .map(|coord| F2Dot14::from_f32(coord.to_f64() as _))
                 .collect();
-            self.hvar
-                .advance_width_delta(gid.into(), &coords)
-                .unwrap()
-                .to_f64()
+            match &self.table {
+                MetricVariationTable::Hvar(hvar) => hvar
+                    .advance_width_delta(gid.into(), &coords)
+                    .unwrap()
+                    .to_f64(),
+                MetricVariationTable::Vvar(vvar) => vvar
+                    .advance_height_delta(gid.into(), &coords)
+                    .unwrap()
+                    .to_f64(),
+            }
         }
     }
 
@@ -2362,27 +2473,263 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![0, 2, 3, 1, 2],
         );
-        let hvar = HvarReader::new(hvar, result.fe_context.glyph_order.get());
+        let hvar = AdvanceDeltaReader::from_hvar(hvar, result.fe_context.glyph_order.get());
         // .notdef is not variable
         assert_eq!(
-            hvar.width_delta(".notdef", &[NormalizedCoord::new(0.0)]),
+            hvar.advance_delta(".notdef", &[NormalizedCoord::new(0.0)]),
             0.0
         );
         // 'space' has two masters, with Bold 100 units wider than Regular
         assert_eq!(
-            hvar.width_delta("space", &[NormalizedCoord::new(1.0)]),
+            hvar.advance_delta("space", &[NormalizedCoord::new(1.0)]),
             100.0
         );
         // ... so it will be exactly 50 units wider half-way in between
         assert_eq!(
-            hvar.width_delta("space", &[NormalizedCoord::new(0.5)]),
+            hvar.advance_delta("space", &[NormalizedCoord::new(0.5)]),
             50.0
         );
         // 'A' is 120 units wider than Regular in the Bold master
-        assert_eq!(hvar.width_delta("A", &[NormalizedCoord::new(1.0)]), 120.0);
+        assert_eq!(hvar.advance_delta("A", &[NormalizedCoord::new(1.0)]), 120.0);
         // ... but also has an additional Medium (wght=500, normalized 0.3333) master with
         // a delta of 70; so at normalized 0.5 (wght=550), its delta will *not* be 60
-        assert_eq!(hvar.width_delta("A", &[NormalizedCoord::new(0.5)]), 83.0);
+        assert_eq!(hvar.advance_delta("A", &[NormalizedCoord::new(0.5)]), 83.0);
+    }
+
+    #[test]
+    fn compile_vvar_multi_model_indirect_varstore() {
+        // Some glyphs are 'sparse' and define different sets of locations, so multiple
+        // sub-models are required to compute the advance height deltas.
+        // FontTools always builds an indirect VarStore in this case and we do the same.
+        let result =
+            TestCompile::compile_source("HVVAR/MultiModel_Indirect/MultiModelIndirect.designspace");
+        let font = result.font();
+        let num_glyphs = font.maxp().unwrap().num_glyphs();
+        assert_eq!(num_glyphs, 5);
+        let vvar = font.vvar().unwrap();
+        let varstore = vvar.item_variation_store().unwrap();
+        // Glyph "A" defines three masters (Regular, Medium and Bold) so uses two
+        // regions (the first two in the list); the rest of the glyphs only have
+        // two masters so use only one region (the last one).
+        assert_var_regions(
+            &varstore,
+            &vec![
+                vec![[0.0, 0.333313, 1.0]],
+                vec![[0.333313, 1.0, 1.0]],
+                vec![[0.0, 1.0, 1.0]],
+            ],
+        );
+        // in this particular test font, despite being multi-model, we still end up with
+        // a single VarData subtable, filled with zeros for regions that don't apply
+        assert_eq!(varstore.item_variation_data_count(), 1);
+        let vardata = varstore.item_variation_data().get(0).unwrap().unwrap();
+        assert_eq!(vardata.region_indexes(), &[0, 1, 2]);
+        // 3 rows instead of 5 because gid1, gid3, and gid4 happen to share the same varidx
+        assert_eq!(vardata.item_count(), 3);
+        // .notdef has no vertical metrics variation: [0, 0, 0]
+        // space, I, T have 2-master variation (Regular to Bold): [0, 0, 100]
+        // A has 3-master variation (Regular to Medium to Bold): [70, 120, 0]
+        assert_eq!(
+            vec![vec![0, 0, 0], vec![0, 0, 100], vec![70, 120, 0],],
+            delta_sets(&vardata)
+        );
+        let Some(Ok(varidx_map)) = vvar.advance_height_mapping() else {
+            panic!("Expected advance height mapping");
+        };
+        assert_eq!(
+            (0..num_glyphs)
+                .map(|gid| {
+                    let varidx = varidx_map.get(gid as u32).unwrap();
+                    assert_eq!(varidx.outer, 0);
+                    varidx.inner
+                })
+                .collect::<Vec<_>>(),
+            vec![0, 1, 2, 1, 1],
+        );
+        let vvar = AdvanceDeltaReader::from_vvar(vvar, result.fe_context.glyph_order.get());
+        // .notdef is not variable
+        assert_eq!(
+            vvar.advance_delta(".notdef", &[NormalizedCoord::new(0.0)]),
+            0.0
+        );
+        // 'space' has two masters, with Bold 100 units taller than Regular
+        assert_eq!(
+            vvar.advance_delta("space", &[NormalizedCoord::new(1.0)]),
+            100.0
+        );
+        // ... so it will be exactly 50 units taller half-way in between
+        assert_eq!(
+            vvar.advance_delta("space", &[NormalizedCoord::new(0.5)]),
+            50.0
+        );
+        // 'A' is 120 units taller than Regular in the Bold master
+        assert_eq!(vvar.advance_delta("A", &[NormalizedCoord::new(1.0)]), 120.0);
+        // ... but also has an additional Medium (wght=500, normalized 0.3333) master with
+        // a delta of 70; so at normalized 0.5 (wght=550), its delta will *not* be 60
+        assert_eq!(vvar.advance_delta("A", &[NormalizedCoord::new(0.5)]), 83.0);
+    }
+
+    #[test]
+    fn gvar_simple_glyph_has_vertical_phantom_point_deltas() {
+        // Verify that gvar includes non-zero deltas for vertical phantom points.
+        // Glyphs "A" and "I" are simple glyphs with varying vertical metrics (advance height
+        // and vertical origin) between Regular and Bold masters, which should produce
+        // non-zero Y deltas for the vertical "top" and "bottom" phantom points.
+        let result =
+            TestCompile::compile_source("HVVAR/SingleModel_Direct/SingleModelDirect.designspace");
+
+        assert!(
+            result.fe_context.static_metadata.get().build_vertical,
+            "build_vertical should be true for this test font"
+        );
+
+        let font = result.font();
+        let gvar = font.gvar().unwrap();
+
+        // Test with glyph "I" which has varying vertical metrics
+        let glyph_order = result.fe_context.glyph_order.get();
+        let glyph_name = GlyphName::from("I");
+        let gid = glyph_order.glyph_id(&glyph_name).unwrap();
+
+        let glyph_var_data = gvar
+            .glyph_variation_data(gid.into())
+            .unwrap()
+            .expect("Glyph 'I' should have gvar variation data");
+
+        let mut tuples = glyph_var_data.tuples();
+        let first_tuple = tuples
+            .next()
+            .expect("Should have at least one tuple variation");
+        let deltas: Vec<_> = first_tuple.deltas().collect();
+
+        // Glyph "I" has 4 outline points, so phantom points follow after them:
+        //   [4]=left horizontal, [5]=right horizontal,
+        //   [6]=top vertical, [7]=bottom vertical
+        assert_eq!(
+            deltas.len(),
+            8,
+            "Should have 8 deltas (4 outline + 4 phantom points)"
+        );
+
+        // Verify that vertical phantom points have non-zero Y deltas.
+        // The exact values are based on:
+        // Regular: height=950, vertOrigin=850 -> Bold: height=1000, vertOrigin=870
+        let top_phantom = deltas[6];
+        assert_eq!(
+            (top_phantom.x_delta, top_phantom.y_delta),
+            (0, 20),
+            "Top vertical phantom should have Y delta of 20 (vertOrigin: 850 -> 870)"
+        );
+        let bottom_phantom = deltas[7];
+        assert_eq!(
+            (bottom_phantom.x_delta, bottom_phantom.y_delta),
+            (0, -30),
+            "Bottom vertical phantom should have Y delta of -30 (bottom: -100 -> -130)"
+        );
+    }
+
+    #[test]
+    fn gvar_composite_has_vertical_phantom_point_deltas() {
+        // Verify that composite glyphs include non-zero vertical phantom point deltas
+        // when build_vertical=true.
+        let result =
+            TestCompile::compile_source("HVVAR/SingleModel_Direct/SingleModelDirect.designspace");
+
+        assert!(
+            result.fe_context.static_metadata.get().build_vertical,
+            "build_vertical should be true for this test font"
+        );
+
+        let font = result.font();
+        let gvar = font.gvar().unwrap();
+        let glyf = font.glyf().unwrap();
+        let head = font.head().unwrap();
+
+        // Test with glyph "Aacute" which is a composite (A + acutecomb)
+        let glyph_order = result.fe_context.glyph_order.get();
+        let glyph_name = GlyphName::from("Aacute");
+        let gid = glyph_order.glyph_id(&glyph_name).unwrap();
+
+        let is_long = head.index_to_loc_format() == 1;
+        let loca = font.loca(is_long).unwrap();
+        let glyph_data = loca.get_glyf(gid.into(), &glyf).unwrap().unwrap();
+        assert!(
+            matches!(glyph_data, glyf::Glyph::Composite(_)),
+            "Aacute should be a composite glyph"
+        );
+
+        let glyph_var_data = gvar
+            .glyph_variation_data(gid.into())
+            .unwrap()
+            .expect("Composite glyph 'Aacute' should have gvar variation data");
+
+        let mut tuples = glyph_var_data.tuples();
+        let first_tuple = tuples
+            .next()
+            .expect("Should have at least one tuple variation");
+        let deltas: Vec<_> = first_tuple.deltas().collect();
+
+        // Composite glyphs have one point per component (for X/Y offset) and then the 4
+        // phantom points. So for glyph "Aacute" (A + acutecomb) we have:
+        //   [0]=A offset, [1]=acutecomb offset,
+        //   [2]=left horiz, [3]=right horiz, [4]=top vert, [5]=bottom vert
+        assert!(
+            deltas.len() >= 6,
+            "Should have at least 6 deltas (2 component offsets + 4 phantom points)"
+        );
+
+        // Verify that vertical phantom points have non-zero Y deltas
+        // Aacute has:
+        //   Regular (height=1000, vertOrigin=880) -> Bold (height=1050, vertOrigin=900)
+        // thus producing the same deltas as simple glyph "I" in the previous test
+        let top_phantom = deltas[4];
+        assert_eq!(
+            (top_phantom.x_delta, top_phantom.y_delta),
+            (0, 20),
+            "Top vertical phantom should have Y delta of 20 (vertOrigin: 880 -> 900)"
+        );
+        let bottom_phantom = deltas[5];
+        assert_eq!(
+            (bottom_phantom.x_delta, bottom_phantom.y_delta),
+            (0, -30),
+            "Bottom vertical phantom should have Y delta of -30 (bottom: -120 -> -150)"
+        );
+    }
+
+    #[test]
+    fn no_gvar_vertical_phantom_deltas_without_build_vertical() {
+        // Verify that when build_vertical=false, vertical phantom points have zero deltas
+        let result = TestCompile::compile_source("wght_var.designspace");
+
+        assert!(
+            !result.fe_context.static_metadata.get().build_vertical,
+            "build_vertical should be false for this test font"
+        );
+
+        let font = result.font();
+        let gvar = font.gvar().unwrap();
+
+        let glyph_order = result.fe_context.glyph_order.get();
+        let glyph_name = GlyphName::from("bar");
+        let gid = glyph_order.glyph_id(&glyph_name).unwrap();
+
+        let glyph_var_data = gvar
+            .glyph_variation_data(gid.into())
+            .unwrap()
+            .expect("Glyph 'bar' should have gvar variation data");
+
+        let mut tuples = glyph_var_data.tuples();
+        let first_tuple = tuples.next().unwrap();
+        let deltas: Vec<_> = first_tuple.deltas().collect();
+
+        // The "bar" glyph has 4 outline points + 4 phantom points = 8 total points.
+        // When build_vertical=false, the vertical phantom points (indices 6, 7) are set to
+        // (0.0, 0.0) in add_phantom_points, so they produce zero deltas which IUP optimization
+        // omits from the final gvar output.
+        assert!(
+            deltas.len() <= 6,
+            "Should have at most 6 deltas if vertical phantom points are omitted"
+        );
     }
 
     fn anchor_coords(at: AnchorTable) -> (i32, i32) {
@@ -2677,9 +3024,11 @@ mod tests {
         assert!(!expected_delta_sets.is_empty());
         let expected_num_regions = expected_delta_sets[0].len() as u16;
         assert!(expected_num_regions > 0);
-        assert!(expected_delta_sets
-            .iter()
-            .all(|row| row.len() as u16 == expected_num_regions));
+        assert!(
+            expected_delta_sets
+                .iter()
+                .all(|row| row.len() as u16 == expected_num_regions)
+        );
 
         assert_eq!(
             varstore.variation_region_list().unwrap().region_count(),
@@ -2868,10 +3217,11 @@ mod tests {
         assert_eq!(fvar.axis_count(), gvar.axis_count());
         let glyph_count = font.maxp().unwrap().num_glyphs();
         assert_eq!(gvar.glyph_count(), glyph_count);
-        assert!((0..glyph_count).all(|gid| gvar
-            .glyph_variation_data(GlyphId16::new(gid).into())
-            .unwrap()
-            .is_none()));
+        assert!((0..glyph_count).all(|gid| {
+            gvar.glyph_variation_data(GlyphId16::new(gid).into())
+                .unwrap()
+                .is_none()
+        }));
     }
 
     // if a font has custom gdef categories defined, create the gdef table and
@@ -3473,11 +3823,12 @@ mod tests {
             .unwrap();
         let rvrn = feature_list.feature_records()[rvrn_idx];
         // base rvrn feature has no lookups
-        assert!(rvrn
-            .feature(feature_list.offset_data())
-            .unwrap()
-            .lookup_list_indices()
-            .is_empty());
+        assert!(
+            rvrn.feature(feature_list.offset_data())
+                .unwrap()
+                .lookup_list_indices()
+                .is_empty()
+        );
 
         let rvrn_replacement = get_first_feature_substitution(gsub, rvrn_idx);
         // rvrn at the front
@@ -3500,11 +3851,12 @@ mod tests {
             .unwrap();
         let rvrn = feature_list.feature_records()[rvrn_idx];
         // base rvrn feature has no lookups
-        assert!(rvrn
-            .feature(feature_list.offset_data())
-            .unwrap()
-            .lookup_list_indices()
-            .is_empty());
+        assert!(
+            rvrn.feature(feature_list.offset_data())
+                .unwrap()
+                .lookup_list_indices()
+                .is_empty()
+        );
 
         let rvrn_replacement = get_first_feature_substitution(gsub, rvrn_idx);
         assert_eq!(rvrn_replacement.lookup_list_indices(), [0]);
@@ -3576,11 +3928,12 @@ mod tests {
 
         let fvar = font.fvar().unwrap();
 
-        assert!(fvar
-            .instances()
-            .unwrap()
-            .iter()
-            .all(|instance| instance.unwrap().post_script_name_id.is_none()));
+        assert!(
+            fvar.instances()
+                .unwrap()
+                .iter()
+                .all(|instance| instance.unwrap().post_script_name_id.is_none())
+        );
     }
 
     #[rstest]
@@ -3772,9 +4125,11 @@ mod tests {
         let peso_gid = result.get_gid("peso");
         let peso_bracket_gid = result.get_gid("peso.BRACKET.varAlt01");
 
-        assert!([yen_gid, yen_bracket_gid, peso_gid, peso_bracket_gid]
-            .iter()
-            .all(|gid| *gid > GlyphId16::NOTDEF));
+        assert!(
+            [yen_gid, yen_bracket_gid, peso_gid, peso_bracket_gid]
+                .iter()
+                .all(|gid| *gid > GlyphId16::NOTDEF)
+        );
 
         fn get_component_gids(glyph: &glyf::Glyph) -> Vec<GlyphId16> {
             match glyph {
@@ -3861,11 +4216,10 @@ mod tests {
             );
         };
 
-        let has_flag = glyph.components().any(|comp| {
+        glyph.components().any(|comp| {
             comp.flags
                 .contains(glyf::CompositeGlyphFlags::USE_MY_METRICS)
-        });
-        has_flag
+        })
     }
 
     #[test]
@@ -3897,5 +4251,20 @@ mod tests {
         };
 
         assert_eq!(glyph.num_points(), 3); // instead of the 4 points in the source.
+    }
+
+    #[test]
+    fn generate_variable_notdef() {
+        let result = TestCompile::compile_source("glyphs3/empty_font_needs_variable_notdef.glyphs");
+        let ir_notdef = result.fe_context.get_glyph(".notdef");
+        assert_eq!(ir_notdef.sources().len(), 2);
+        assert_eq!(
+            ir_notdef
+                .sources()
+                .values()
+                .map(|inst| inst.height.unwrap_or(0.) as u32)
+                .collect::<HashSet<_>>(),
+            HashSet::from([1000, 1100])
+        );
     }
 }

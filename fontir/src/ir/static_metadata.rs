@@ -18,9 +18,10 @@ use write_fonts::{
 use fontdrasil::{
     coords::{DesignCoord, NormalizedCoord, NormalizedLocation, UserLocation},
     types::{Axes, Axis, GlyphName},
+    variations::{VariationModel, VariationModelError},
 };
 
-use crate::{error::VariationModelError, orchestration::Persistable, variations::VariationModel};
+use crate::orchestration::Persistable;
 
 /// Glyph names mapped to postscript names
 pub type PostscriptNames = HashMap<GlyphName, GlyphName>;
@@ -431,7 +432,7 @@ impl StaticMetadata {
                 .map(|(string, key)| (key, string)),
         );
 
-        let variation_model = VariationModel::new(global_locations, variable_axes.clone())?;
+        let variation_model = VariationModel::new(global_locations, variable_axes.axis_order());
 
         let default_location = axes
             .iter()
@@ -569,9 +570,8 @@ mod tests {
                     vec![(WGHT, NormalizedCoord::new(0.0))].into(),
                     vec![(WGHT, NormalizedCoord::new(1.0))].into(),
                 ]),
-                vec![axis.clone()].into(),
-            )
-            .unwrap(),
+                vec![axis.tag],
+            ),
             default_location: vec![(WGHT, NormalizedCoord::new(0.0))].into(),
             names: HashMap::from([
                 (

@@ -85,7 +85,7 @@ impl Target {
     /// Otherwise, it is the parent directory of the config file.
     fn source_dir(&self) -> PathBuf {
         if self.is_virtual {
-            self.repo_dir.join(VIRTUAL_CONFIG_DIR)
+            self.repo_dir.clone()
         } else {
             self.repo_dir.join(self.config.parent().unwrap())
         }

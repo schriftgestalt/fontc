@@ -4,6 +4,7 @@ use fontdrasil::orchestration::{Access, AccessBuilder, Work};
 use fontir::orchestration::WorkId as FeWorkId;
 use log::debug;
 use write_fonts::{
+    FontBuilder,
     read::TopLevelTable,
     tables::{
         avar::Avar, cmap::Cmap, colr::Colr, cpal::Cpal, fvar::Fvar, gasp::Gasp, gdef::Gdef,
@@ -12,12 +13,11 @@ use write_fonts::{
         post::Post, stat::Stat, vhea::Vhea, vmtx::Vmtx, vvar::Vvar,
     },
     types::Tag,
-    FontBuilder,
 };
 
 use crate::{
     error::Error,
-    orchestration::{to_bytes, AnyWorkId, BeWork, Context, WorkId},
+    orchestration::{AnyWorkId, BeWork, Context, WorkId, to_bytes},
 };
 
 #[derive(Debug)]
@@ -30,7 +30,13 @@ pub fn create_font_work() -> Box<BeWork> {
 fn is_variable_only(workid: &WorkId) -> bool {
     matches!(
         workid,
-        WorkId::Avar | WorkId::Fvar | WorkId::Gvar | WorkId::Stat | WorkId::Hvar | WorkId::Mvar
+        WorkId::Avar
+            | WorkId::Fvar
+            | WorkId::Gvar
+            | WorkId::Stat
+            | WorkId::Hvar
+            | WorkId::Vvar
+            | WorkId::Mvar
     )
 }
 

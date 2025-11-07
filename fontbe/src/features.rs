@@ -14,31 +14,31 @@ use log::{debug, error, trace, warn};
 use ordered_float::OrderedFloat;
 
 use fea_rs::{
+    DiagnosticSet, GlyphMap, Opts, ParseTree,
     compile::{
-        error::CompilerError, Compilation, FeatureBuilder, FeatureProvider, NopFeatureProvider,
-        PendingLookup, VariationInfo,
+        Compilation, FeatureBuilder, FeatureProvider, NopFeatureProvider, PendingLookup,
+        VariationInfo, error::CompilerError,
     },
     parse::{FileSystemResolver, SourceLoadError, SourceResolver},
     typed::{AstNode, LanguageSystem},
-    DiagnosticSet, GlyphMap, Opts, ParseTree,
 };
 
 use fontir::{
     ir::{FeaturesSource, GlyphOrder, StaticMetadata},
     orchestration::{Flags, WorkId as FeWorkId},
-    variations::{DeltaError, VariationModel},
 };
 
 use fontdrasil::{
     coords::NormalizedLocation,
     orchestration::{Access, AccessBuilder, Work},
     types::Axis,
+    variations::{DeltaError, VariationModel},
 };
 use properties::UnicodeShortName;
 use write_fonts::{
+    OtRound,
     tables::{gdef::GlyphClassDef, layout::ClassDef, variations::VariationRegion},
     types::{GlyphId16, NameId, Tag},
-    OtRound,
 };
 
 use crate::{
@@ -207,13 +207,10 @@ pub(crate) fn resolve_variable_metric<'a>(
     let var_model: Cow<'_, VariationModel> = if locations == global_locations {
         Cow::Borrowed(&static_metadata.variation_model)
     } else {
-        Cow::Owned(
-            VariationModel::new(
-                locations.into_iter().cloned().collect(),
-                static_metadata.axes.clone(),
-            )
-            .unwrap(),
-        )
+        Cow::Owned(VariationModel::new(
+            locations.into_iter().cloned().collect(),
+            static_metadata.axes.axis_order(),
+        ))
     };
 
     let raw_deltas: Vec<_> = var_model
@@ -335,13 +332,10 @@ impl VariationInfo for FeaVariationInfo<'_> {
         let var_model: Cow<'_, VariationModel> = if locations == global_locations {
             Cow::Borrowed(&self.static_metadata.variation_model)
         } else {
-            Cow::Owned(
-                VariationModel::new(
-                    locations.into_iter().cloned().collect(),
-                    self.static_metadata.axes.clone(),
-                )
-                .unwrap(),
-            )
+            Cow::Owned(VariationModel::new(
+                locations.into_iter().cloned().collect(),
+                self.static_metadata.axes.axis_order(),
+            ))
         };
 
         // Only 1 value per region for our input

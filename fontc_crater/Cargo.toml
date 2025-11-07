@@ -1,7 +1,7 @@
 [package]
 name = "fontc_crater"
 version = "0.2.0"
-edition = "2021"
+edition = "2024"
 license = "MIT/Apache-2.0"
 description = "A compiler for fonts."
 repository = "https://github.com/googlefonts/fontc"
@@ -10,7 +10,7 @@ readme = "README.md"
 [dependencies]
 fontc = { version = "0.3.2", path = "../fontc" }
 
-google-fonts-sources = "0.10.0"
+google-fonts-sources = "0.10.3"
 maud = "0.27.0"
 plist = "1.2"
 tidier = "0.5.3"

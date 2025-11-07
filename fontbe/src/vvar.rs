@@ -8,11 +8,11 @@ use fontdrasil::{
 };
 use fontir::orchestration::WorkId as FeWorkId;
 use write_fonts::tables::{
-    variations::{ivs_builder::VariationStoreBuilder, DeltaSetIndexMap},
+    variations::{DeltaSetIndexMap, ivs_builder::VariationStoreBuilder},
     vvar::Vvar,
 };
 
-use crate::metric_variations::{table_size, AdvanceDeltas, DeltaDirection};
+use crate::metric_variations::{AdvanceDeltas, DeltaDirection, table_size};
 use crate::{
     error::Error,
     orchestration::{AnyWorkId, BeWork, Context, WorkId},
@@ -54,7 +54,7 @@ impl Work<Context, AnyWorkId, Error> for VvarWork {
         }
         let var_model = &static_metadata.variation_model;
         let glyph_order = context.ir.glyph_order.get();
-        let axis_count = var_model.axes().count().try_into().unwrap();
+        let axis_count = var_model.axis_order().len().try_into().unwrap();
         let glyphs: Vec<_> = glyph_order
             .names()
             .map(|name| context.ir.glyphs.get(&FeWorkId::Glyph(name.clone())))
@@ -63,7 +63,7 @@ impl Work<Context, AnyWorkId, Error> for VvarWork {
         let metrics = context.ir.global_metrics.get();
 
         let mut glyph_deltas = AdvanceDeltas::new(
-            var_model.clone(),
+            &static_metadata,
             glyph_locations,
             &metrics,
             DeltaDirection::Vertical,
@@ -82,10 +82,12 @@ impl Work<Context, AnyWorkId, Error> for VvarWork {
             }
             // sanity checks
             assert_eq!(var_idxes.len(), glyph_order.len());
-            assert!(var_idxes
-                .drain(..)
-                .enumerate()
-                .all(|(i, idx)| i as u32 == idx));
+            assert!(
+                var_idxes
+                    .drain(..)
+                    .enumerate()
+                    .all(|(i, idx)| i as u32 == idx)
+            );
             // we don't use the returned (identity) map in this case
             Some(direct_builder.build().0)
         } else {

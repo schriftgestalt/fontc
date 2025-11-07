@@ -10,7 +10,7 @@ use std::{
 use serde::{Deserialize, Serialize};
 use smol_str::SmolStr;
 
-use write_fonts::types::Tag;
+pub use write_fonts::types::Tag;
 
 use crate::coords::{CoordConverter, UserCoord};
 
@@ -210,6 +210,10 @@ impl Axes {
         Self { axes, by_tag }
     }
 
+    pub fn axis_order(&self) -> Vec<Tag> {
+        self.axes.iter().map(|ax| ax.tag).collect()
+    }
+
     #[doc(hidden)]
     pub fn for_test(tags: &[&str]) -> Self {
         tags.iter().copied().map(Axis::for_test).collect()
@@ -310,11 +314,7 @@ impl WidthClass {
             .map(|v| (*v, (v.to_percent() - percent).abs()))
             .reduce(
                 |(w0, d0), (w1, d1)| {
-                    if d1 < d0 {
-                        (w1, d1)
-                    } else {
-                        (w0, d0)
-                    }
+                    if d1 < d0 { (w1, d1) } else { (w0, d0) }
                 },
             )
             .unwrap()

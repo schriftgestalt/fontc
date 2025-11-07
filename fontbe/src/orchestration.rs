@@ -10,13 +10,14 @@ use std::{
 };
 
 use fea_rs::{
-    compile::{Compilation, FeatureKey, PendingLookup},
     GlyphMap, GlyphSet, ParseTree,
+    compile::{Compilation, FeatureKey, PendingLookup},
 };
 use fontdrasil::{
     coords::NormalizedLocation,
     orchestration::{Access, AccessControlList, Identifier, IdentifierDiscriminant, Work},
     types::GlyphName,
+    variations::VariationRegion,
 };
 use fontir::{
     ir::{self, GlyphOrder, KernGroup},
@@ -24,15 +25,14 @@ use fontir::{
         Context as FeContext, ContextItem, ContextMap, Flags, IdAware, Persistable,
         PersistentStorage, WorkId as FeWorkIdentifier,
     },
-    variations::VariationRegion,
 };
 
 use ordered_float::OrderedFloat;
 use serde::{Deserialize, Serialize};
 
 use write_fonts::{
-    dump_table,
-    read::{collections::IntSet, tables::gsub::Gsub as ReadGsub, FontRead},
+    FontWrite, dump_table,
+    read::{FontRead, collections::IntSet, tables::gsub::Gsub as ReadGsub},
     tables::{
         base::Base,
         cmap::Cmap,
@@ -43,11 +43,11 @@ use write_fonts::{
         gdef::{Gdef, GlyphClassDef},
         glyf::Glyph as RawGlyph,
         gpos::{
+            Gpos,
             builders::{
                 CursivePosBuilder, MarkToBaseBuilder, MarkToLigBuilder, MarkToMarkBuilder,
                 PairPosBuilder, ValueRecordBuilder,
             },
-            Gpos,
         },
         gsub::Gsub,
         gvar::{GlyphDelta, GlyphDeltas},
@@ -68,7 +68,6 @@ use write_fonts::{
     },
     types::{GlyphId16, Tag},
     validate::Validate,
-    FontWrite,
 };
 
 use crate::{avar::PossiblyEmptyAvar, error::Error, paths::Paths};
@@ -504,8 +503,8 @@ impl FeaFirstPassOutput {
     #[cfg(test)]
     pub(crate) fn for_test(ast: ParseTree, glyph_map: &GlyphMap) -> Result<Self, Error> {
         use fea_rs::{
-            compile::{NopFeatureProvider, NopVariationInfo},
             Opts,
+            compile::{NopFeatureProvider, NopVariationInfo},
         };
 
         match fea_rs::compile::compile::<NopVariationInfo, NopFeatureProvider>(
@@ -1088,8 +1087,10 @@ where
 
 #[cfg(test)]
 mod tests {
-    use fontdrasil::coords::NormalizedCoord;
-    use fontir::variations::{Tent, VariationRegion};
+    use fontdrasil::{
+        coords::NormalizedCoord,
+        variations::{Tent, VariationRegion},
+    };
 
     use super::*;
 

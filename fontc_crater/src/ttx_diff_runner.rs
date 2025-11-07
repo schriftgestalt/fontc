@@ -237,18 +237,16 @@ fn assert_has_timeout_coreutil() {
     match Command::new("which").arg("timeout").output() {
         Ok(out) if out.status.success() => return,
         Err(e) => eprintln!("'which' failed!? '{e}'"),
-        Ok(_) => eprintln!("could not find 'timeout'. You may need to install coreutils (on macos, `brew install coreutils`)"),
+        Ok(_) => eprintln!(
+            "could not find 'timeout'. You may need to install coreutils (on macos, `brew install coreutils`)"
+        ),
     }
     std::process::exit(1);
 }
 
 // replace nan with 0
 fn non_nan(val: f32) -> f32 {
-    if val.is_nan() {
-        0.0
-    } else {
-        val
-    }
+    if val.is_nan() { 0.0 } else { val }
 }
 
 /// make sure we can find and execute ttx_diff script

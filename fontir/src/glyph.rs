@@ -13,17 +13,17 @@ use fontdrasil::{
     coords::NormalizedLocation,
     orchestration::{Access, AccessBuilder, Work},
     types::GlyphName,
+    variations::{RoundingBehaviour, VariationModel},
 };
-use kurbo::Affine;
+use kurbo::{Affine, BezPath};
 use log::{debug, log_enabled, trace};
 use ordered_float::OrderedFloat;
-use write_fonts::types::GlyphId16;
+use write_fonts::{OtRound, types::GlyphId16};
 
 use crate::{
     error::{BadGlyph, Error},
-    ir::{Component, Glyph, GlyphBuilder, GlyphInstance, GlyphOrder, StaticMetadata},
+    ir::{Component, GlobalMetric, Glyph, GlyphBuilder, GlyphInstance, GlyphOrder, StaticMetadata},
     orchestration::{Context, Flags, IrWork, WorkId},
-    variations::VariationModel,
 };
 
 pub fn create_glyph_order_work() -> Box<IrWork> {
@@ -32,19 +32,6 @@ pub fn create_glyph_order_work() -> Box<IrWork> {
 
 #[derive(Debug)]
 struct GlyphOrderWork {}
-
-/// Glyph should split if it has components *and* contours.
-///
-/// Such a glyph turns into a simple glyf with the contours and a
-/// composite glyph that references the simple glyph as a component.
-///
-/// <https://learn.microsoft.com/en-us/typography/opentype/spec/glyf>
-fn has_components_and_contours(glyph: &Glyph) -> bool {
-    glyph
-        .sources()
-        .values()
-        .any(|inst| !inst.components.is_empty() && !inst.contours.is_empty())
-}
 
 fn name_for_derivative(base_name: &GlyphName, names_in_use: &GlyphOrder) -> GlyphName {
     let mut i = 0;
@@ -392,8 +379,7 @@ fn convert_components_to_contours(context: &Context, original: &Glyph) -> Result
 
         trace!(
             "'{}' retains {} {component_affine:?} at {loc:?}",
-            original.name,
-            referenced_glyph.name
+            original.name, referenced_glyph.name
         );
         let inst = simple
             .sources
@@ -480,7 +466,7 @@ fn instantiate_instance(
     // the fractional bits can be very important).
     // This matches fonttools, see https://github.com/googlefonts/ufo2ft/blob/01d3faee/Lib/ufo2ft/_compilers/baseCompiler.py#L266
     let deltas = model
-        .deltas_with_rounding(&point_seqs, crate::variations::RoundingBehaviour::None)
+        .deltas_with_rounding(&point_seqs, RoundingBehaviour::None)
         .map_err(|e| BadGlyph::new(&glyph.name, e))?;
     let points = VariationModel::interpolate_from_deltas(loc, &deltas);
     Ok(glyph
@@ -505,10 +491,10 @@ fn variation_model_for_glyph<'a>(
     // otherwise we need a special model for this glyph.
     // This code is duplicated in various places (hvar, e.g.)
     // and maybe we can share it? or cache these models more globally?
-    Cow::Owned(
-        VariationModel::new(glyph.sources().keys().cloned().collect(), meta.axes.clone())
-            .expect("point axes not present in meta.axes"),
-    )
+    Cow::Owned(VariationModel::new(
+        glyph.sources().keys().cloned().collect(),
+        meta.axes.iter().map(|ax| ax.tag).collect(),
+    ))
 }
 
 fn move_contours_to_new_component(
@@ -634,21 +620,95 @@ fn ensure_notdef_exists_and_is_gid_0(
         None => {
             trace!("Generate {} and make it gid 0", GlyphName::NOTDEF);
             glyph_order.set_glyph_id(&GlyphName::NOTDEF, 0);
-            let static_metadata = context.static_metadata.get();
-            let metrics = context
-                .global_metrics
-                .get()
-                .at(static_metadata.default_location());
-            let builder = GlyphBuilder::new_notdef(
-                static_metadata.default_location().clone(),
-                static_metadata.units_per_em,
-                metrics.ascender.0,
-                metrics.descender.0,
-            );
-            context.glyphs.set(builder.build()?);
+            let notdef = synthesize_notdef(context)?;
+            context.glyphs.set(notdef);
         }
     }
     Ok(())
+}
+
+/// Create a (possibly variable) .notdef glyph
+///
+/// * see <https://github.com/googlefonts/ufo2ft/blob/b3895a96ca/Lib/ufo2ft/outlineCompiler.py#L1666-L1694>
+/// * and <https://github.com/googlefonts/fontc/issues/1262>
+fn synthesize_notdef(context: &Context) -> Result<Glyph, BadGlyph> {
+    let static_metadata = context.static_metadata.get();
+    let global_metrics = context.global_metrics.get();
+
+    let mut builder = GlyphBuilder::new(GlyphName::NOTDEF);
+    let upem = static_metadata.units_per_em;
+    let width = (upem as f64 * 0.5).ot_round();
+    let default = global_metrics.at(static_metadata.default_location());
+    let default_outline = make_notdef_outline(upem, default.ascender.0, default.descender.0);
+    // NOTE: Most glyphs have `None` heights, but here we are just matching ufo2ft:
+    // See https://github.com/googlefonts/ufo2ft/blob/b3895a96/Lib/ufo2ft/outlineCompiler.py#L1656-L1
+    let height = Some(default.ascender.0 - default.descender.0);
+
+    builder.try_add_source(
+        static_metadata.default_location(),
+        GlyphInstance {
+            width,
+            height,
+            contours: vec![default_outline],
+            ..Default::default()
+        },
+    )?;
+    if static_metadata.axes.is_empty() {
+        return builder.build();
+    }
+
+    for location in static_metadata.variation_model.locations() {
+        let ascender = global_metrics.get(GlobalMetric::Ascender, location);
+        let descender = global_metrics.get(GlobalMetric::Descender, location);
+        if (ascender, descender) == (default.ascender, default.descender) {
+            continue;
+        }
+        let outline = make_notdef_outline(upem, ascender.0, descender.0);
+
+        let instance = GlyphInstance {
+            width,
+            height: Some(ascender.0 - descender.0),
+            contours: vec![outline],
+            ..Default::default()
+        };
+        builder.try_add_source(location, instance)?;
+    }
+
+    builder.build()
+}
+
+/// Make a tofu outline: a rectangle sized based on the provided metrics
+fn make_notdef_outline(upm: u16, ascender: f64, descender: f64) -> BezPath {
+    let upm = upm as f64;
+    let width = OtRound::<u16>::ot_round(upm * 0.5) as f64;
+    let stroke = OtRound::<u16>::ot_round(upm * 0.05) as f64;
+
+    let mut path = BezPath::new();
+
+    // outer box
+    let x_min = stroke;
+    let x_max = width - stroke;
+    let y_max = ascender;
+    let y_min = descender;
+    path.move_to((x_min, y_min));
+    path.line_to((x_max, y_min));
+    path.line_to((x_max, y_max));
+    path.line_to((x_min, y_max));
+    path.line_to((x_min, y_min));
+    path.close_path();
+
+    // inner, cut out, box
+    let x_min = x_min + stroke;
+    let x_max = x_max - stroke;
+    let y_max = y_max - stroke;
+    let y_min = y_min + stroke;
+    path.move_to((x_min, y_min));
+    path.line_to((x_min, y_max));
+    path.line_to((x_max, y_max));
+    path.line_to((x_max, y_min));
+    path.line_to((x_min, y_min));
+    path.close_path();
+    path
 }
 
 impl Work<Context, WorkId, Error> for GlyphOrderWork {
@@ -734,7 +794,7 @@ impl Work<Context, WorkId, Error> for GlyphOrderWork {
                         component transforms overflow F2Dot14 [-2.0, 2.0] range"
                 );
                 todo.push_back((GlyphOp::ConvertToContour, glyph.clone()));
-            } else if has_components_and_contours(glyph) {
+            } else if glyph.has_mixed_contours_and_components() {
                 if context.flags.contains(Flags::PREFER_SIMPLE_GLYPHS) {
                     todo.push_back((GlyphOp::ConvertToContour, glyph.clone()));
                     log::debug!(
@@ -799,7 +859,10 @@ mod tests {
     use rstest::rstest;
 
     use crate::{
-        ir::{Component, Glyph, GlyphBuilder, GlyphInstance, GlyphOrder, StaticMetadata},
+        ir::{
+            Component, GlobalMetricsBuilder, Glyph, GlyphBuilder, GlyphInstance, GlyphOrder,
+            StaticMetadata,
+        },
         orchestration::{Context, Flags, WorkId},
         paths::Paths,
     };
@@ -922,6 +985,35 @@ mod tests {
         }
     }
 
+    fn make_notdef_with_ascenders(ascender: &[(&NormalizedLocation, f64)]) -> Glyph {
+        let context = test_context_with_locations(ascender.iter().map(|x| x.0.clone()).collect());
+        let mut global_metrics = GlobalMetricsBuilder::new();
+        for (loc, val) in ascender {
+            global_metrics.populate_defaults(loc, 1000, None, Some(*val), Some(0.0), None);
+        }
+        let global_metrics = global_metrics
+            .build(&context.static_metadata.get().axes)
+            .unwrap();
+        context.global_metrics.set(global_metrics);
+        synthesize_notdef(&context).unwrap()
+    }
+
+    #[test]
+    fn variable_notdef() {
+        let [loc0, loc1] = make_wght_locations([0.0, 1.0]);
+        let notdef = make_notdef_with_ascenders(&[(&loc0, 600.), (&loc1, 700.)]);
+        assert_eq!(notdef.sources()[&loc0].height, Some(600.));
+        assert_eq!(notdef.sources()[&loc1].height, Some(700.));
+    }
+
+    #[test]
+    fn non_variable_notdef() {
+        let [loc0, loc1] = make_wght_locations([0.0, 1.0]);
+        let notdef = make_notdef_with_ascenders(&[(&loc0, 600.), (&loc1, 600.)]);
+        assert_eq!(notdef.sources().len(), 1);
+        assert_eq!(notdef.sources()[&loc0].height, Some(600.));
+    }
+
     #[test]
     fn has_components_and_contours_false() {
         let mut glyph = GlyphBuilder::new("duck".into());
@@ -938,7 +1030,7 @@ mod tests {
             )
             .unwrap();
         let glyph = glyph.build().unwrap();
-        assert!(!has_components_and_contours(&glyph));
+        assert!(!glyph.has_mixed_contours_and_components());
     }
 
     #[test]
@@ -951,7 +1043,7 @@ mod tests {
             )
             .unwrap();
         let glyph = glyph.build().unwrap();
-        assert!(has_components_and_contours(&glyph));
+        assert!(glyph.has_mixed_contours_and_components());
     }
 
     #[test]
@@ -1028,14 +1120,18 @@ mod tests {
         );
 
         assert_simple(&simple);
-        assert!(composite
-            .sources()
-            .values()
-            .all(|gi| gi.contours.is_empty()));
-        assert!(composite
-            .sources()
-            .values()
-            .all(|gi| !gi.components.is_empty()));
+        assert!(
+            composite
+                .sources()
+                .values()
+                .all(|gi| gi.contours.is_empty())
+        );
+        assert!(
+            composite
+                .sources()
+                .values()
+                .all(|gi| !gi.components.is_empty())
+        );
     }
 
     #[test]
@@ -1206,10 +1302,12 @@ mod tests {
 
     fn assert_is_simple_glyph(context: &Context, glyph_name: GlyphName) {
         let glyph = context.get_glyph(glyph_name);
-        assert!(glyph
-            .sources()
-            .values()
-            .all(|inst| !inst.contours.is_empty() && inst.components.is_empty()));
+        assert!(
+            glyph
+                .sources()
+                .values()
+                .all(|inst| !inst.contours.is_empty() && inst.components.is_empty())
+        );
     }
 
     fn assert_is_flattened_component(context: &Context, glyph_name: GlyphName) {
@@ -1217,14 +1315,16 @@ mod tests {
         for (loc, inst) in glyph.sources().iter() {
             assert!(!inst.components.is_empty());
             for component in inst.components.iter() {
-                assert!(context
-                    .glyphs
-                    .get(&WorkId::Glyph(component.base.clone()))
-                    .sources()
-                    .get(loc)
-                    .unwrap()
-                    .components
-                    .is_empty());
+                assert!(
+                    context
+                        .glyphs
+                        .get(&WorkId::Glyph(component.base.clone()))
+                        .sources()
+                        .get(loc)
+                        .unwrap()
+                        .components
+                        .is_empty()
+                );
             }
         }
     }
@@ -1825,8 +1925,8 @@ mod tests {
     }
 
     #[test]
-    fn composite_with_intermediate_component_layer_and_another_nested_compoonent_without_intermediates(
-    ) {
+    fn composite_with_intermediate_component_layer_and_another_nested_compoonent_without_intermediates()
+     {
         // based on ecaron in Savate.glyphs
         let _ = env_logger::builder().is_test(true).try_init();
 

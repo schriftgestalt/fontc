@@ -4,8 +4,8 @@ use std::{
     collections::{HashMap, HashSet},
     panic::AssertUnwindSafe,
     sync::{
-        atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc, Mutex,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
 };
 
@@ -16,8 +16,8 @@ use fontbe::{
     colr::create_colr_work,
     cpal::create_cpal_work,
     features::{
-        create_gather_ir_kerning_work, create_kern_segment_work, create_kerns_work,
-        create_mark_work, FeatureCompilationWork, FeatureFirstPassWork,
+        FeatureCompilationWork, FeatureFirstPassWork, create_gather_ir_kerning_work,
+        create_kern_segment_work, create_kerns_work, create_mark_work,
     },
     font::create_font_work,
     fvar::create_fvar_work,
@@ -50,9 +50,9 @@ use fontir::{
 use log::{debug, trace, warn};
 
 use crate::{
+    Error,
     timing::{JobTime, JobTimer},
     work::{AnyAccess, AnyContext, AnyWork},
-    Error, Input,
 };
 
 /// A set of interdependent jobs to execute.
@@ -117,14 +117,11 @@ fn priority(id: &AnyWorkId) -> u32 {
 
 impl Workload {
     // Pass in timer to enable t0 to be as early as possible
-    pub fn new(input: &Input, mut timer: JobTimer, skip_features: bool) -> Result<Self, Error> {
-        let time = timer
-            .create_timer(AnyWorkId::InternalTiming("create_source"), 0)
-            .run();
-
-        let source = input.create_source()?;
-
-        timer.add(time.complete());
+    pub fn new(
+        source: Box<dyn Source>,
+        timer: JobTimer,
+        skip_features: bool,
+    ) -> Result<Self, Error> {
         let time = timer
             .create_timer(AnyWorkId::InternalTiming("Create workload"), 0)
             .run();
@@ -216,13 +213,12 @@ impl Workload {
     /// True if job might read what other produces
     #[cfg(test)]
     fn might_read(&self, job: &Job, other: &Job) -> bool {
-        let result = job.read_access.check(&other.id)
+        job.read_access.check(&other.id)
             || self
                 .also_completes
                 .get(&other.id)
                 .map(|also| also.iter().any(|other_id| job.read_access.check(other_id)))
-                .unwrap_or_default();
-        result
+                .unwrap_or_default()
     }
 
     pub(crate) fn add(&mut self, work: impl Into<AnyWork>) {
@@ -343,7 +339,9 @@ impl Workload {
             return;
         }
 
-        let mut deps = AccessBuilder::<AnyWorkId>::new().variant(FeWorkIdentifier::StaticMetadata);
+        let mut deps = AccessBuilder::<AnyWorkId>::new()
+            .variant(FeWorkIdentifier::StaticMetadata)
+            .variant(FeWorkIdentifier::GlobalMetrics);
 
         let mut has_components = false;
         for inst in glyph.sources().values() {
@@ -590,7 +588,11 @@ impl Workload {
                 self.update_launchable(&mut launchable);
                 if launchable.is_empty() && !self.jobs_pending.values().any(|j| j.running) {
                     if log::log_enabled!(log::Level::Warn) {
-                        warn!("{}/{} jobs have succeeded, nothing is running, and nothing is launchable", self.success.len(), self.job_count);
+                        warn!(
+                            "{}/{} jobs have succeeded, nothing is running, and nothing is launchable",
+                            self.success.len(),
+                            self.job_count
+                        );
                         for pending in self.jobs_pending.keys() {
                             warn!("  blocked: {pending:?}");
                         }

@@ -1,6 +1,6 @@
 //! Font IR types.
 use std::{
-    collections::{hash_map::RandomState, BTreeMap, BTreeSet, HashMap, HashSet},
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet, hash_map::RandomState},
     fmt::{Debug, Display},
     io::Read,
     path::PathBuf,
@@ -10,22 +10,22 @@ use indexmap::IndexSet;
 use kurbo::{Affine, BezPath, PathEl, Point};
 use log::{log_enabled, trace, warn};
 use ordered_float::OrderedFloat;
-use serde::{de::Error as _, Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::Error as _};
 use smol_str::SmolStr;
 use write_fonts::{
-    types::{GlyphId16, NameId, Tag},
     OtRound,
+    types::{GlyphId16, NameId, Tag},
 };
 
 use fontdrasil::{
     coords::NormalizedLocation,
     types::{Axes, GlyphName},
+    variations::{ModelDeltas, VariationModel},
 };
 
 use crate::{
     error::{BadAnchor, BadAnchorReason, BadGlyph, BadGlyphKind, Error},
     orchestration::{IdAware, Persistable, WorkId},
-    variations::{ModelDeltas, VariationModel},
 };
 
 // just public so we publish the docs
@@ -588,8 +588,8 @@ impl GlobalMetricsBuilder {
             .0
             .into_iter()
             .map(|(tag, values)| -> Result<_, Error> {
-                let model = VariationModel::new(values.keys().cloned().collect(), axes.clone())
-                    .map_err(|e| Error::MetricVariationError(tag, e))?;
+                let model =
+                    VariationModel::new(values.keys().cloned().collect(), axes.axis_order());
 
                 let sources = values
                     .into_iter()
@@ -1181,10 +1181,10 @@ impl AnchorKind {
                 return Err(BadAnchorReason::NilMarkGroup);
             }
             // error on '_top_3'
-            if let Some((_, suffix)) = suffix.rsplit_once('_') {
-                if suffix.parse::<usize>().is_ok() {
-                    return Err(BadAnchorReason::NumberedMarkAnchor);
-                }
+            if let Some((_, suffix)) = suffix.rsplit_once('_')
+                && suffix.parse::<usize>().is_ok()
+            {
+                return Err(BadAnchorReason::NumberedMarkAnchor);
             }
             // looks like a mark!
             return Ok(AnchorKind::Mark(suffix.into()));
@@ -1394,17 +1394,14 @@ fn has_overflowing_2x2_transforms(
         })
     });
 
-    if log_enabled!(log::Level::Trace) {
-        if let Some((location, component_name, value)) = overflow_info.as_ref() {
-            trace!(
-                "{} at location {:?} has component '{}' \
+    if log_enabled!(log::Level::Trace)
+        && let Some((location, component_name, value)) = overflow_info.as_ref()
+    {
+        trace!(
+            "{} at location {:?} has component '{}' \
                 with a transform value ({}) overflowing [-2.0, 2.0] range",
-                name,
-                location,
-                component_name,
-                value
-            );
-        }
+            name, location, component_name, value
+        );
     }
 
     overflow_info.is_some()
@@ -1426,7 +1423,7 @@ impl Glyph {
         let default_location = match (defaults.next(), defaults.next()) {
             (None, _) => return Err(BadGlyph::new(name, BadGlyphKind::NoDefaultLocation)),
             (Some(_), Some(_)) => {
-                return Err(BadGlyph::new(name, BadGlyphKind::MultipleDefaultLocations))
+                return Err(BadGlyph::new(name, BadGlyphKind::MultipleDefaultLocations));
             }
             (Some(pos), None) => pos.to_owned(),
         };
@@ -1475,6 +1472,18 @@ impl Glyph {
         self.sources
             .values()
             .flat_map(|inst| inst.components.iter().map(|comp| &comp.base))
+    }
+
+    /// `true` if any instance has both components and contours.
+    ///
+    /// Such a glyph turns into a simple glyf with the contours and a
+    /// composite glyph that references the simple glyph as a component.
+    ///
+    /// <https://learn.microsoft.com/en-us/typography/opentype/spec/glyf>
+    pub(crate) fn has_mixed_contours_and_components(&self) -> bool {
+        self.sources()
+            .values()
+            .any(|inst| !inst.components.is_empty() && !inst.contours.is_empty())
     }
 
     /// Does the Glyph use the same components, (name, 2x2 transform), for all instances?
@@ -1665,65 +1674,6 @@ impl GlyphBuilder {
         }
     }
 
-    /// * see <https://github.com/googlefonts/ufo2ft/blob/b3895a96ca910c1764df016bfee4719448cfec4a/Lib/ufo2ft/outlineCompiler.py#L1666-L1694>
-    pub fn new_notdef(
-        default_location: NormalizedLocation,
-        upem: u16,
-        ascender: f64,
-        descender: f64,
-    ) -> Self {
-        let upem = upem as f64;
-        let width: u16 = (upem * 0.5).ot_round();
-        let width = width as f64;
-        let stroke: u16 = (upem * 0.05).ot_round();
-        let stroke = stroke as f64;
-
-        let mut path = BezPath::new();
-
-        // outer box
-        let x_min = stroke;
-        let x_max = width - stroke;
-        let y_max = ascender;
-        let y_min = descender;
-        path.move_to((x_min, y_min));
-        path.line_to((x_max, y_min));
-        path.line_to((x_max, y_max));
-        path.line_to((x_min, y_max));
-        path.line_to((x_min, y_min));
-        path.close_path();
-
-        // inner, cut out, box
-        let x_min = x_min + stroke;
-        let x_max = x_max - stroke;
-        let y_max = y_max - stroke;
-        let y_min = y_min + stroke;
-        path.move_to((x_min, y_min));
-        path.line_to((x_min, y_max));
-        path.line_to((x_max, y_max));
-        path.line_to((x_max, y_min));
-        path.line_to((x_min, y_min));
-        path.close_path();
-
-        // TODO: Should this be None to match other glyphs' heights? This would deviate from ufo2ft
-        // See https://github.com/googlefonts/ufo2ft/blob/b3895a96/Lib/ufo2ft/outlineCompiler.py#L1656-L1658
-        let height = Some(ascender - descender);
-
-        Self {
-            name: GlyphName::NOTDEF.clone(),
-            emit_to_binary: true,
-            codepoints: HashSet::new(),
-            sources: HashMap::from([(
-                default_location,
-                GlyphInstance {
-                    width,
-                    height,
-                    contours: vec![path],
-                    ..Default::default()
-                },
-            )]),
-        }
-    }
-
     pub fn build(self) -> Result<Glyph, BadGlyph> {
         Glyph::new(
             self.name,
@@ -1804,6 +1754,40 @@ impl GlyphInstance {
         self.vertical_origin
             .unwrap_or(metrics.os2_typo_ascender.into_inner())
             .ot_round()
+    }
+
+    /// Add phantom points for this glyph instance.
+    ///
+    /// * <https://github.com/fonttools/fonttools/blob/3b9a73ff8379ab49d3ce35aaaaf04b3a7d9d1655/Lib/fontTools/ttLib/tables/_g_l_y_f.py#L335-L367>
+    /// * <https://docs.microsoft.com/en-us/typography/opentype/spec/tt_instructing_glyphs#phantoms>
+    pub fn add_phantom_points(
+        &self,
+        metrics: &GlobalMetricsInstance,
+        build_vertical: bool,
+        points: &mut Vec<Point>,
+    ) {
+        // FontTools says
+        //      leftSideX = glyph.xMin - leftSideBearing
+        //      rightSideX = leftSideX + horizontalAdvanceWidth
+        // We currently always set lsb to xMin so leftSideX = 0, rightSideX = advance.
+        let advance_width: u16 = self.width.ot_round();
+        points.push(Point::new(0.0, 0.0)); // leftSideX, 0
+        points.push(Point::new(advance_width as f64, 0.0)); // rightSideX, 0
+
+        let (top, bottom) = if build_vertical {
+            // FontTools says
+            //      topSideY = topSideBearing + glyph.yMax
+            //      bottomSideY = topSideY - verticalAdvanceWidth
+            // We currently always set tsb to vertical_origin - yMax so topSideY = verticalOrigin.
+            let top = self.vertical_origin(metrics) as f64;
+            let bottom = top - self.height(metrics) as f64;
+            (top, bottom)
+        } else {
+            Default::default()
+        };
+
+        points.push(Point::new(0.0, top));
+        points.push(Point::new(0.0, bottom));
     }
 
     /// Return the values in this instance used for interpolation.
@@ -2008,7 +1992,7 @@ mod tests {
     use std::collections::HashMap;
 
     use fontdrasil::types::Axis;
-    use write_fonts::types::NameId;
+    use write_fonts::{OtRound, types::NameId};
 
     use pretty_assertions::assert_eq;
 
@@ -2275,12 +2259,16 @@ mod tests {
             (NameId::TYPOGRAPHIC_SUBFAMILY_NAME, "Regular Italic"),
         ]);
 
-        assert!(different_subfamily
-            .get(NameId::TYPOGRAPHIC_FAMILY_NAME)
-            .is_some());
-        assert!(different_subfamily
-            .get(NameId::TYPOGRAPHIC_SUBFAMILY_NAME)
-            .is_some());
+        assert!(
+            different_subfamily
+                .get(NameId::TYPOGRAPHIC_FAMILY_NAME)
+                .is_some()
+        );
+        assert!(
+            different_subfamily
+                .get(NameId::TYPOGRAPHIC_SUBFAMILY_NAME)
+                .is_some()
+        );
     }
 
     // If x-height is undefined, ufo2ft derives the strikeout position from its

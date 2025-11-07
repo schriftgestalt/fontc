@@ -4,8 +4,8 @@ use write_fonts::types::Tag;
 
 use crate::{
     parse::{
-        lexer::{Kind, TokenSet},
         Parser,
+        lexer::{Kind, TokenSet},
     },
     token_tree::Kind as AstKind,
 };
@@ -64,10 +64,10 @@ fn table_impl(parser: &mut Parser, tag: Tag, table_fn: impl Fn(&mut Parser, Toke
     }
 
     parser.expect_recover(Kind::RBrace, TokenSet::TOP_SEMI);
-    if let Some(close) = parser.expect_tag(TokenSet::TOP_SEMI) {
-        if close.tag != tag {
-            parser.raw_error(close.range, format!("expected tag '{tag}'"));
-        }
+    if let Some(close) = parser.expect_tag(TokenSet::TOP_SEMI)
+        && close.tag != tag
+    {
+        parser.raw_error(close.range, format!("expected tag '{tag}'"));
     }
 
     parser.expect_semi();
@@ -132,6 +132,7 @@ mod base {
             })
         } else if parser.matches(0, MINMAX) {
             parser.in_node(AstKind::BaseMinMaxNode, |parser| {
+                assert!(parser.eat(MINMAX));
                 parser.eat_until(EAT_UNTIL);
             });
         } else {
@@ -215,6 +216,7 @@ mod gdef {
             // unimplemented (in spec)
         } else if parser.matches(0, Kind::LigatureCaretByDevKw) {
             parser.in_node(AstKind::TableEntryNode, |parser| {
+                assert!(parser.eat(Kind::LigatureCaretByDevKw));
                 parser.eat_until(eat_until)
             })
         } else if parser.matches(0, CARET_POS_OR_IDX) {
