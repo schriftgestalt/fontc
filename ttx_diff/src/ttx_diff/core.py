@@ -93,7 +93,6 @@ from tempfile import NamedTemporaryFile
 from typing import Any, Callable, Dict, Generator, List, Optional, Sequence, Tuple
 from urllib.parse import urlparse
 
-
 # Since `absl` flags do not support overriding the generated flag names, the
 # string values should match the lowercase versions of the constants (i. e.
 # include the same underscores).
@@ -252,7 +251,6 @@ def rel_user(fragment: Any) -> str:
 # All additional kwargs are passed to subprocess.run
 def log_and_run(cmd: Sequence, cwd=None, **kwargs):
     # Convert to ~ format because it's annoying to see really long usr paths
-    cmd_string = " ".join(str(c) for c in cmd)
     log_cmd = " ".join(rel_user(c) for c in cmd)
     if cwd is not None:
         eprint(f"  (cd {rel_user(cwd)} && {log_cmd})")
@@ -403,7 +401,9 @@ def build_fontmake(source: Path, build_dir: Path, font_file_name: str):
 
 @contextmanager
 def modified_gftools_config(
-    cmdline: List[str], extra_args: Sequence[str]
+    maybe_path_to_move_config: Optional[Path],
+    cmdline: List[str],
+    extra_args: Sequence[str],
 ) -> Generator[None, None, None]:
     """Modify the gftools config file to add extra arguments.
 
@@ -440,12 +440,14 @@ def modified_gftools_config(
             config.get("extraFontmakeArgs", "").split(" ") + extra_args
         )
 
+        config_dir = maybe_path_to_move_config or Path(config_path).parent
+
         with NamedTemporaryFile(
             mode="w",
             prefix="config_",
             suffix=".yaml",
             delete=False,
-            dir=Path(config_path).parent,
+            dir=config_dir,
         ) as f:
             yaml.dump(config, f)
         temp_path = Path(f.name)
@@ -461,7 +463,7 @@ def modified_gftools_config(
 
 
 def run_gftools(
-    source: Path, config: Path, build_dir: Path, font_file_name: str, fontc_bin: Optional[Path] = None
+    source: Path, config_path: Path, build_dir: Path, font_file_name: str, fontc_bin: Optional[Path] = None
 ):
     out_file = build_dir / font_file_name
     if out_file.exists():
@@ -473,7 +475,7 @@ def run_gftools(
     cmd = [
         "gftools",
         "builder",
-        config,
+        config_path,
         "--experimental-simple-output",
         out_dir,
         "--experimental-single-source",
@@ -489,7 +491,8 @@ def run_gftools(
     if not FLAGS.production_names:
         extra_args.append("--no-production-names")
 
-    with modified_gftools_config(cmd, extra_args):
+    maybe_new_config_path = path_to_move_external_config(source, config_path)
+    with modified_gftools_config(maybe_new_config_path, cmd, extra_args):
         build(cmd, None)
 
     # return a concise error if gftools produces != one output
@@ -503,6 +506,23 @@ def run_gftools(
 
     if out_dir.exists():
         shutil.rmtree(out_dir)
+
+
+def path_to_move_external_config(source: Path, config: Path) -> Optional[Path]:
+    source_repo = find_repo_root(source)
+    config_repo = find_repo_root(config)
+
+    if source_repo != config_repo:
+        return source_repo
+
+
+def find_repo_root(path: Path) -> Optional[Path]:
+    if path.is_dir() and path.joinpath(".git").exists():
+        return path
+    elif path.parent == path:
+        return None
+    else:
+        return find_repo_root(path.parent)
 
 
 def source_is_variable(path: Path) -> bool:
@@ -1755,14 +1775,76 @@ def build_crate(manifest_path: Path):
     log_and_run(cmd, cwd=None, check=True)
 
 
-def get_crate_path(cli_arg: Optional[str], root_dir: Path, crate_name: str) -> Path:
-    if cli_arg:
-        return Path(cli_arg)
+def get_fontc_and_normalizer_binary_paths(root_dir: Path) -> Tuple[Path, Path]:
+    fontc_path = FLAGS.fontc_path
+    norm_path = FLAGS.normalizer_path
+    if fontc_path is None:
+        fontc_manifest_path = root_dir / "fontc" / "Cargo.toml"
+        fontc_path = root_dir / "target" / "release" / "fontc"
+        build_crate(fontc_manifest_path)
+        assert fontc_path.is_file(), "failed to build fontc?"
+    else:
+        fontc_path = Path(fontc_path)
+        assert fontc_path.is_file(), f"fontc path '{fontc_path}' does not exist"
+    if norm_path is None:
+        otl_norm_manifest_path = root_dir / "otl-normalizer" / "Cargo.toml"
+        norm_path = root_dir / "target" / "release" / "otl-normalizer"
+        build_crate(otl_norm_manifest_path)
+        assert norm_path.is_file(), "failed to build otl-normalizer?"
+    else:
+        norm_path = Path(norm_path)
+        assert norm_path.is_file(), f"normalizer path '{norm_path}' does not exist"
 
     manifest_path = root_dir / crate_name / "Cargo.toml"
     bin_path = root_dir / "target" / "release" / crate_name
     build_crate(manifest_path)
     return bin_path
+    return (fontc_path, norm_path)
+
+
+def get_crate_path(
+    bin_path: Optional[str], root_dir: Optional[Path], crate_name: str
+) -> Path:
+    """Get path to a crate binary, building it if in fontc repo, or finding in PATH.
+
+    Args:
+        bin_path: Path provided via CLI flag
+        root_dir: Path to fontc repository root (if we're in one)
+        crate_name: Name of the crate (e.g., "fontc" or "otl-normalizer")
+
+    Returns:
+        Path to the binary
+
+    Raises:
+        SystemExit: If binary cannot be found or built
+    """
+    if bin_path:
+        path = Path(bin_path)
+        if not path.is_file():
+            sys.exit(f"Specified {crate_name} path '{path}' does not exist")
+        return path
+
+    # If we're in the fontc repo, try to build it
+    if root_dir is not None:
+        manifest_path = root_dir / crate_name / "Cargo.toml"
+        if manifest_path.is_file():
+            built_path = root_dir / "target" / "release" / crate_name
+            build_crate(manifest_path)
+            if built_path.is_file():
+                return built_path
+
+    # Try to find in PATH
+    which_result = shutil.which(crate_name)
+    if which_result:
+        return Path(which_result)
+
+    # Give helpful error message
+    sys.exit(
+        f"Could not find '{crate_name}' binary. Please either:\n"
+        f"  1. Specify the path with --{crate_name}_path flag\n"
+        f"  2. Install {crate_name} and ensure it's in your PATH\n"
+        f"  3. Run from the fontc repository root to build it automatically"
+    )
 
 
 #===============================================================================
@@ -1941,27 +2023,35 @@ def main(argv):
     cache_dir = Path(FLAGS.cache_path).expanduser().resolve()
     source = resolve_source(argv[1], cache_dir).resolve()
 
-    # Configure dependencies.
-    root = Path(".").resolve()
-    if not (root / "fontc" / "Cargo.toml").is_file():
-        sys.exit(
-            "This script must be run from the root of the fontc repository; "
-            "could not find 'fontc/Cargo.toml'."
-        )
+    # Check if we're in the fontc repository (optional - allows building binaries)
+    cwd = Path(".").resolve()
+    fontc_repo_root = None
+    if (cwd / "fontc" / "Cargo.toml").is_file():
+        fontc_repo_root = cwd
+        eprint(f"Detected fontc repository at {rel_user(fontc_repo_root)}")
+
+    # Get binary paths - will look in PATH or build if in repo
+    fontc_bin_path = get_crate_path(FLAGS.fontc_path, fontc_repo_root, "fontc")
+    otl_bin_path = get_crate_path(
+        FLAGS.normalizer_path, fontc_repo_root, "otl-normalizer"
+    )
 
     if shutil.which(FONTMAKE_NAME) is None:
         sys.exit("No fontmake")
     if shutil.which(TTX_NAME) is None:
         sys.exit("No ttx")
 
-    otl_bin = get_crate_path(FLAGS.normalizer_path, root, "otl-normalizer")
-    assert otl_bin.is_file(), f"normalizer path '{otl_bin}' does not exist"
-
-    # Configure output directory.
-    out_dir = root / "build"
     if FLAGS.outdir is not None:
         out_dir = Path(FLAGS.outdir).expanduser().resolve()
-        assert out_dir.exists(), f"output directory {out_dir} does not exist"
+        if not out_dir.exists():
+            sys.exit(f"Specified output directory {out_dir} does not exist")
+    elif fontc_repo_root is not None:
+        # If in fontc repo, use repo's build directory
+        out_dir = fontc_repo_root / "build"
+    else:
+        # Otherwise use current directory
+        out_dir = cwd / "ttx_diff_output"
+        eprint(f"No --outdir specified, using {rel_user(out_dir)}")
 
     # Configure tools.
     tool_1_type = FLAGS.tool_1_type
@@ -2091,7 +2181,3 @@ def main(argv):
             print_json(output)
 
     sys.exit(diffs * 2)  # 0 or 2
-
-
-if __name__ == "__main__":
-    app.run(main)

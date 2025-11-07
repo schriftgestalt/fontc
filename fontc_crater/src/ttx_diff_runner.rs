@@ -1,9 +1,6 @@
 use std::{
     collections::BTreeMap,
-    path::{
-        Path, 
-        PathBuf
-    },
+    path::Path,
     process::Command,
 };
 
@@ -18,7 +15,8 @@ use crate::{
     },
 };
 
-static SCRIPT_PATH: &str = "./resources/scripts/ttx_diff.py";
+// Run ttx-diff via python -m to ensure we use the venv's installed version
+static TTX_DIFF_MODULE: &str = "ttx_diff";
 
 pub(super) struct TtxContext {
     pub fontc_path: PathBuf,
@@ -42,7 +40,7 @@ pub(super) fn run_ttx_diff(ctx: &TtxContext, target: &Target) -> RunResult<DiffO
         .copy_cached_files_to_build_dir(target, &build_dir);
 
     let mut cmd = Command::new("python3");
-    cmd.arg(SCRIPT_PATH)
+    cmd.arg("-m").arg(TTX_DIFF_MODULE)
         .arg("--json")
         .arg("--outdir").arg(outdir)
         .arg("--normalizer_path").arg(&ctx.normalizer_path);
@@ -249,30 +247,21 @@ fn non_nan(val: f32) -> f32 {
     if val.is_nan() { 0.0 } else { val }
 }
 
-/// make sure we can find and execute ttx_diff script
+/// make sure we can find and execute ttx-diff module
 pub(super) fn assert_can_run_script() {
     // first check that we can find timeout(1) (not present on macOS by default,
     // install via homebrew)
     assert_has_timeout_coreutil();
-    // then check that we can run the ttx_diff script itself
-    let path = Path::new(SCRIPT_PATH);
-    if !path.exists() {
-        eprintln!(
-            "cannot find script at {}",
-            path.canonicalize().as_deref().unwrap_or(path).display()
-        );
-        std::process::exit(1);
-    }
+    // then check that we can run ttx-diff via python -m
     match Command::new("python3")
-        .arg(SCRIPT_PATH)
-        .arg("--only_check_args")
+        .args(["-m", TTX_DIFF_MODULE, "--only_check_args"])
         .output()
     {
         Ok(output) if output.status.success() => return,
         Ok(output) => {
             let stdout = String::from_utf8_lossy(&output.stdout);
             let stderr = String::from_utf8_lossy(&output.stderr);
-            eprintln!("Could not run ttx_diff.py. Have you set up your virtual environment?");
+            eprintln!("Could not run ttx_diff. Have you set up your virtual environment?");
             if !stdout.is_empty() {
                 eprintln!("stdout: {stdout}");
             }

@@ -169,7 +169,7 @@ impl Target {
         let tool_2 = self.tool_2();
 
         let mut cmd = format!(
-            "python3 resources/scripts/ttx_diff.py '{repo_url}{sha_part}#{}'",
+            "python3 -m ttx_diff '{repo_url}{sha_part}#{}'",
             rel_source_path.display()
         );
         write!(&mut cmd, " --tool_1_type {}", tool_1.unversioned_name()).unwrap();
@@ -381,7 +381,7 @@ mod tests {
         let hmm = target.repro_command("example.com", &cache_dir);
         assert_eq!(
             hmm,
-            "python3 resources/scripts/ttx_diff.py 'example.com?123456789a#sources/hi.glyphs' --tool_1_type fontc --tool_2_type fontmake"
+            "python3 -m ttx_diff 'example.com?123456789a#sources/hi.glyphs' --tool_1_type fontc --tool_2_type fontmake"
         );
     }
 }
