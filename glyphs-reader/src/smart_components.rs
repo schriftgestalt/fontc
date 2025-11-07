@@ -53,13 +53,23 @@ pub(crate) fn instantiate_for_layer(
 
     // these are the layers of the glyph that have the same associated master
     // as the layer that we are instantiating for.
-    let relevant_layers = ref_glyph
+    let mut relevant_layers = ref_glyph
         .layers
         .iter()
         .filter(|layer| {
             !layer.smart_component_positions.is_empty() && layer.master_id() == layer_master_id
         })
         .collect::<Vec<_>>();
+
+    // make sure default layer is first (in python this happens in the iterator itself)
+    // https://github.com/googlefonts/glyphsLib/blob/52c98239/Lib/glyphsLib/classes.py#L555
+    if let Some(idx) = relevant_layers
+        .iter()
+        .position(|l| l.layer_id == layer_master_id)
+        .filter(|idx| *idx != 0)
+    {
+        relevant_layers.swap(0, idx);
+    }
 
     if relevant_layers.is_empty() {
         return Err(BadSmartComponent::NoLayer(layer_master_id.to_string()));
@@ -88,7 +98,7 @@ pub(crate) fn instantiate_for_layer(
         .map(|layer| normalized_location(layer, relevant_layers[0], &name_to_tag_map))
         .collect::<Result<_, _>>()?;
 
-    let model = VariationModel::new(locations, axis_order.clone());
+    let model = VariationModel::new_extrapolating(locations, axis_order.clone());
 
     let axis_tuples = ref_glyph
         .smart_component_axes
@@ -138,7 +148,7 @@ pub(crate) fn instantiate_for_layer(
         })
         .collect::<Result<HashMap<_, _>, BadSmartComponent>>()?;
     let deltas = model.deltas(&point_seqs).unwrap();
-    let points = VariationModel::interpolate_from_deltas(&location, &deltas);
+    let points = model.interpolate_from_deltas(&location, &deltas);
     let mut shapes = shapes_with_new_points(relevant_layers[0], &points);
     shapes.iter_mut().for_each(|shape| {
         shape.apply_affine(component.transform);
@@ -483,11 +493,10 @@ mod tests {
                 (50.0, 50.0, 300.0, 300.0),
             ),
             // Extrapolation
-            // NOTE: this currently fails. Does our variation model support extrapolation?
-            //(
-            //[("Width", 0.0), ("Height", 800.0), ("Shift", 0.0)].as_slice(),
-            //(100.0, 100.0, 100.0, 800.0),
-            //),
+            (
+                [("Width", 0.0), ("Height", 800.0), ("Shift", 0.0)].as_slice(),
+                (100.0, 100.0, 100.0, 800.0),
+            ),
         ];
 
         let glyphs = smart_glyphs(master_id);
@@ -565,11 +574,10 @@ mod tests {
                 (-350.0, 50.0, 300.0, 300.0),
             ),
             // Extrapolation
-            // NOTE: this currently fails. Does our variation model support extrapolation?
-            //(
-            //    [("Width", 0.0), ("Height", 800.0), ("Shift", 0.0)].as_slice(),
-            //    (-200.0, 100.0, 100.0, 800.0),
-            //),
+            (
+                [("Width", 0.0), ("Height", 800.0), ("Shift", 0.0)].as_slice(),
+                (-200.0, 100.0, 100.0, 800.0),
+            ),
         ];
 
         let glyphs = smart_glyphs(master_id);

@@ -129,6 +129,14 @@ pub fn run(args: Args, mut timer: JobTimer) -> Result<(), Error> {
     write_font_file(&args, &be_root)
 }
 
+/// Merges CLI flags with source-derived compilation flags.
+///
+/// A flag is enabled if EITHER the CLI or source enables it.
+/// See <https://github.com/googlefonts/fontc/issues/1701>
+fn merge_compilation_flags(cli_flags: Flags, source: &dyn Source) -> Flags {
+    cli_flags | source.compilation_flags()
+}
+
 /// Run and return an OpenType font
 ///
 /// This is the library entry point to fontc.
@@ -158,6 +166,8 @@ fn _generate_font(
     skip_features: bool,
     mut timer: JobTimer,
 ) -> Result<(BeContext, JobTimer), Error> {
+    let flags = merge_compilation_flags(flags, &*source);
+
     let time = timer
         .create_timer(AnyWorkId::InternalTiming("Init config"), 0)
         .run();
@@ -344,9 +354,11 @@ mod tests {
             let temp_dir = tempdir().unwrap();
             let build_dir = temp_dir.path();
             let args = adjust_args(Args::for_test(build_dir, source));
-            let flags = args.flags();
 
             info!("Compile {args:?}");
+
+            let input = args.source().unwrap().create_source().unwrap();
+            let flags = merge_compilation_flags(args.flags(), &*input);
 
             let (ir_paths, be_paths) =
                 init_paths(args.output_file.as_ref(), &args.build_dir, flags).unwrap();
@@ -355,7 +367,6 @@ mod tests {
 
             let fe_context = FeContext::new_root(flags, ir_paths);
             let be_context = BeContext::new_root(flags, be_paths, &fe_context.read_only());
-            let input = args.source().unwrap().create_source().unwrap();
             let workload = Workload::new(input, timer, args.skip_features).unwrap();
 
             TestCompile {
@@ -3447,27 +3458,50 @@ mod tests {
         let names = name
             .name_record()
             .iter()
-            .map(|rec| (rec.name_id(), resolve_name(&name, rec.name_id()).unwrap()))
+            .map(|rec| {
+                (
+                    rec.name_id(),
+                    rec.language_id(),
+                    rec.string(name.string_data()).unwrap().to_string(),
+                )
+            })
             .collect::<Vec<_>>();
         assert_eq!(
             names,
             [
-                (NameId::COPYRIGHT_NOTICE, "Copy!".to_owned()),
-                (NameId::FAMILY_NAME, "WghtVar".to_owned()),
-                (NameId::SUBFAMILY_NAME, "Regular".to_owned()),
-                (NameId::UNIQUE_ID, "1.234;NONE;WghtVar-Regular".to_owned()),
-                (NameId::FULL_NAME, "WghtVar Regular".to_owned()),
-                (NameId::VERSION_STRING, "Version 1.234".to_owned()),
-                (NameId::POSTSCRIPT_NAME, "WghtVar-Regular".to_owned()),
-                (NameId::DESCRIPTION, "The greatest weight var".to_owned()),
+                (NameId::COPYRIGHT_NOTICE, 0x0409, "Copy!".to_owned()),
+                (NameId::FAMILY_NAME, 0x0409, "WghtVar".to_owned()),
+                (NameId::SUBFAMILY_NAME, 0x0409, "Regular".to_owned()),
+                (
+                    NameId::UNIQUE_ID,
+                    0x0409,
+                    "1.234;NONE;WghtVar-Regular".to_owned()
+                ),
+                (NameId::FULL_NAME, 0x0409, "WghtVar Regular".to_owned()),
+                (NameId::VERSION_STRING, 0x0409, "Version 1.234".to_owned()),
+                (
+                    NameId::POSTSCRIPT_NAME,
+                    0x0409,
+                    "WghtVar-Regular".to_owned()
+                ),
+                (
+                    NameId::DESCRIPTION,
+                    0x0409,
+                    "The greatest weight var".to_owned()
+                ),
                 (
                     NameId::LICENSE_URL,
+                    0x0409,
                     "https://example.com/my/font/license".to_owned()
                 ),
-                // axis & instance names
-                (NameId::new(256), "Weight".to_owned()),
-                // from FEA, merged after names of axes and named instances
-                (NameId::new(257), "my fun feature".to_owned()),
+                (NameId::new(256), 0x0409, "Weight".to_owned()),
+                (NameId::new(257), 0x0409, "my fun feature".to_owned()),
+                (NameId::FAMILY_NAME, 0x0C0A, "SpanishWghtVar".to_owned()),
+                (
+                    NameId::DESCRIPTION,
+                    0x0C0A,
+                    "El mayor peso variable".to_owned()
+                ),
             ]
         );
 
@@ -4266,5 +4300,14 @@ mod tests {
                 .collect::<HashSet<_>>(),
             HashSet::from([1000, 1100])
         );
+    }
+
+    #[test]
+    fn ufo2ftfilters() {
+        let result = TestCompile::compile_source("glyphs3/UfoFilters.glyphs");
+        // Flags should be set from source filters
+        assert!(result.fe_context.flags.contains(Flags::FLATTEN_COMPONENTS));
+        assert!(!result.fe_context.flags.contains(Flags::ERASE_OPEN_CORNERS));
+        // Note: propagate_anchors test removed as that flag doesn't exist yet
     }
 }

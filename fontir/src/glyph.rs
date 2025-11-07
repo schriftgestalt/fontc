@@ -468,7 +468,7 @@ fn instantiate_instance(
     let deltas = model
         .deltas_with_rounding(&point_seqs, RoundingBehaviour::None)
         .map_err(|e| BadGlyph::new(&glyph.name, e))?;
-    let points = VariationModel::interpolate_from_deltas(loc, &deltas);
+    let points = model.interpolate_from_deltas(loc, &deltas);
     Ok(glyph
         .default_instance()
         .new_with_interpolated_values(&points))
@@ -1344,6 +1344,17 @@ mod tests {
         let context = test_context();
         test_data.write_to(&context);
         flatten_glyph(&context, &test_data.deep_component).unwrap();
+        assert_is_flattened_component(&context, test_data.deep_component.name);
+    }
+
+    #[test]
+    fn flatten_components_with_flag() {
+        let test_data = deep_component();
+        let mut context = test_context();
+        context.flags.set(Flags::FLATTEN_COMPONENTS, true);
+
+        test_data.write_to(&context);
+        apply_optional_transformations(&context, &test_data.glyph_order()).unwrap();
         assert_is_flattened_component(&context, test_data.deep_component.name);
     }
 
