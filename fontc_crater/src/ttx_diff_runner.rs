@@ -1,6 +1,6 @@
 use std::{
     collections::BTreeMap,
-    path::Path,
+    path::PathBuf,
     process::Command,
 };
 

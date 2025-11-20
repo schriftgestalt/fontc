@@ -17,7 +17,6 @@ use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use serde::de::DeserializeOwned;
 
 use crate::{
-    BuildType,
     Results,
     Target,
     args::CiArgs,
