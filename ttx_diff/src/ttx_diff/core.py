@@ -346,13 +346,13 @@ def build(cmd: Sequence, build_dir: Optional[Path], **kwargs):
 
 
 # Standalone `fontc` (not managed by `gftools`)
-def build_fontc(source: Path, fontc_bin: Path, build_dir: Path, font_file_name: str):
+def build_fontc(source: Path, fontc_bin_path: Path, build_dir: Path, font_file_name: str):
     out_file = build_dir / font_file_name
     if out_file.exists():
         eprint(f"reusing {rel_user(out_file)}")
         return
     cmd = [
-        fontc_bin,
+        fontc_bin_path,
         "--build-dir",
         ".",
         "-o",
@@ -463,7 +463,7 @@ def modified_gftools_config(
 
 
 def run_gftools(
-    source: Path, config_path: Path, build_dir: Path, font_file_name: str, fontc_bin: Optional[Path] = None
+    source: Path, config_path: Path, build_dir: Path, font_file_name: str, fontc_bin_path: Optional[Path] = None
 ):
     out_file = build_dir / font_file_name
     if out_file.exists():
@@ -481,8 +481,8 @@ def run_gftools(
         "--experimental-single-source",
         source.name,
     ]
-    if fontc_bin is not None:
-        cmd += ["--experimental-fontc", fontc_bin]
+    if fontc_bin_path is not None:
+        cmd += ["--experimental-fontc", fontc_bin_path]
 
     extra_args = []
     if FLAGS.keep_overlaps:
@@ -1776,13 +1776,13 @@ def build_crate(manifest_path: Path):
 
 
 def get_crate_path(
-    bin_path: Optional[str], root_dir: Optional[Path], crate_name: str
+    bin_path: Optional[str], fontc_repo_root: Optional[Path], crate_name: str
 ) -> Path:
     """Get path to a crate binary, building it if in fontc repo, or finding in PATH.
 
     Args:
         bin_path: Path provided via CLI flag
-        root_dir: Path to fontc repository root (if we're in one)
+        fontc_repo_root: Path to fontc repository root (if we're in one)
         crate_name: Name of the crate (e.g., "fontc" or "otl-normalizer")
 
     Returns:
@@ -1798,10 +1798,10 @@ def get_crate_path(
         return path
 
     # If we're in the fontc repo, try to build it
-    if root_dir is not None:
-        manifest_path = root_dir / crate_name / "Cargo.toml"
+    if fontc_repo_root is not None:
+        manifest_path = fontc_repo_root / crate_name / "Cargo.toml"
         if manifest_path.is_file():
-            built_path = root_dir / "target" / "release" / crate_name
+            built_path = fontc_repo_root / "target" / "release" / crate_name
             build_crate(manifest_path)
             if built_path.is_file():
                 return built_path
@@ -1870,19 +1870,19 @@ class Tool(ABC):
 
 @dataclass
 class FontcTool(Tool):
-    root: Path
-    fontc_path: str = None
+    fontc_repo_root: Path
+    fontc_bin_str: str = None
 
-    _fontc_bin: Path = field(init=False, repr=False)
+    _fontc_bin_path: Path = field(init=False, repr=False)
 
     def __post_init__(self):
-        self._fontc_bin = get_crate_path(self.fontc_path, self.root, FONTC_NAME)
-        assert self._fontc_bin.is_file(), f"fontc path '{self._fontc_bin}' does not exist"
+        self._fontc_bin_path = get_crate_path(self.fontc_bin_str, self.fontc_repo_root, FONTC_NAME)
+        assert self._fontc_bin_path.is_file(), f"fontc path '{self._fontc_bin_path}' does not exist"
 
     # Created once, read-only.
     @property
-    def fontc_bin(self):
-        return self._fontc_bin
+    def fontc_bin_path(self):
+        return self._fontc_bin_path
 
 
 @dataclass(unsafe_hash=True)
@@ -1894,7 +1894,7 @@ class StandaloneFontcTool(FontcTool):
 
     def build_action(self, build_dir: Path, font_file_name: str = None) -> Callable[[], None]:
         def action():
-            build_fontc(self.source, self.fontc_bin, build_dir, font_file_name)
+            build_fontc(self.source, self.fontc_bin_path, build_dir, font_file_name)
         return action
 
 
@@ -1907,7 +1907,7 @@ class GfToolsFontcTool(FontcTool):
 
     def build_action(self, build_dir: Path, font_file_name: str = None) -> Callable[[], None]:
         def action():
-            run_gftools(self.source, FLAGS.config, build_dir, font_file_name, self.fontc_bin)
+            run_gftools(self.source, FLAGS.config, build_dir, font_file_name, self.fontc_bin_path)
         return action
 
 
