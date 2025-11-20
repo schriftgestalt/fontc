@@ -2004,16 +2004,18 @@ def main(argv):
         eprint(f"Detected fontc repository at {rel_user(fontc_repo_root)}")
 
     # Get binary paths - will look in PATH or build if in repo
-    fontc_bin_path = get_crate_path(FLAGS.fontc_path, fontc_repo_root, "fontc")
+    # If `fontc` will be used as one of the tools, it will be handled further down.
     otl_bin_path = get_crate_path(
         FLAGS.normalizer_path, fontc_repo_root, "otl-normalizer"
     )
+    assert otl_bin_path.is_file(), f"normalizer path '{otl_bin_path}' does not exist"
 
     if shutil.which(FONTMAKE_NAME) is None:
         sys.exit("No fontmake")
     if shutil.which(TTX_NAME) is None:
         sys.exit("No ttx")
 
+    # Configure output directory.
     if FLAGS.outdir is not None:
         out_dir = Path(FLAGS.outdir).expanduser().resolve()
         if not out_dir.exists():
@@ -2067,11 +2069,11 @@ def main(argv):
 
     tool_1 = None;
     if tool_1_type == ToolType.FONTC:
-        tool_1 = StandaloneFontcTool(source, root, FLAGS.tool_1_path)
+        tool_1 = StandaloneFontcTool(source, fontc_repo_root, FLAGS.tool_1_path)
     elif tool_1_type == ToolType.FONTMAKE:
         tool_1 = StandaloneFontmakeTool(source)
     elif tool_1_type == ToolType.FONTC_GFTOOLS:
-        tool_1 = GfToolsFontcTool(source, root, FLAGS.tool_1_path)
+        tool_1 = GfToolsFontcTool(source, fontc_repo_root, FLAGS.tool_1_path)
     elif tool_1_type == ToolType.FONTMAKE_GFTOOLS:
         tool_1 = GfToolsFontmakeTool(source)
     elif tool_1_type == ToolType.GLYPHSAPP:
@@ -2079,11 +2081,11 @@ def main(argv):
 
     tool_2 = None;
     if tool_2_type == ToolType.FONTC:
-        tool_2 = StandaloneFontcTool(source, root, FLAGS.tool_2_path)
+        tool_2 = StandaloneFontcTool(source, fontc_repo_root, FLAGS.tool_2_path)
     elif tool_2_type == ToolType.FONTMAKE:
         tool_2 = StandaloneFontmakeTool(source)
     elif tool_2_type == ToolType.FONTC_GFTOOLS:
-        tool_2 = GfToolsFontcTool(source, root, FLAGS.tool_2_path)
+        tool_2 = GfToolsFontcTool(source, fontc_repo_root, FLAGS.tool_2_path)
     elif tool_2_type == ToolType.FONTMAKE_GFTOOLS:
         tool_2 = GfToolsFontmakeTool(source)
     elif tool_2_type == ToolType.GLYPHSAPP:
@@ -2133,7 +2135,7 @@ def main(argv):
 
     output = generate_output(
         build_dir,
-        otl_bin,
+        otl_bin_path,
         tool_1_type,
         tool_1_name,
         font_file_1,
