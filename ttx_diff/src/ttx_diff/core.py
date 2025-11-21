@@ -957,9 +957,9 @@ def normalize_all_offcurve_starting_point(contour):
 
 # https://github.com/googlefonts/fontc/issues/1107
 def normalize_glyf_contours(
-    fontc_ttx: etree.ElementTree, fontmake_ttx: etree.ElementTree
+    tool_1_ttx: etree.ElementTree, tool_2_ttx: etree.ElementTree
 ) -> tuple[dict[str, list[int]], dict[str, list[int]]]:
-    """Reorders contours when they are identical between fontc and fontmake.
+    """Reorders contours when they are identical between tools 1 and 2.
 
     If contours differ (e.g., different starting points), leaves
     them in their original order to avoid misleading diffs.
@@ -967,48 +967,52 @@ def normalize_glyf_contours(
     For all-offcurve contours, normalizes the starting point to be the point
     closest to the origin before comparison.
 
-    Returns a tuple of two dicts, one for fontc and one for fontmake, containing
+    Returns a tuple of two dicts, one for tool 1 and one for tool 2, containing
     the new order of prior point indices for each glyph, later used for sorting
     gvar contours.
     """
-    fontc_point_orders: dict[str, list[int]] = {}
-    fontmake_point_orders: dict[str, list[int]] = {}
+    tool_1_point_orders: dict[str, list[int]] = {}
+    tool_2_point_orders: dict[str, list[int]] = {}
 
     # Get glyphs from both TTX trees
-    fontc_glyphs = {g.attrib["name"]: g for g in fontc_ttx.xpath("//glyf/TTGlyph")}
-    fontmake_glyphs = {
-        g.attrib["name"]: g for g in fontmake_ttx.xpath("//glyf/TTGlyph")
+    tool_1_glyphs = {
+        g.attrib["name"]: g for g in tool_1_ttx.xpath("//glyf/TTGlyph")
+    }
+    tool_2_glyphs = {
+        g.attrib["name"]: g for g in tool_2_ttx.xpath("//glyf/TTGlyph")
     }
 
     # Only process glyphs that exist in both outputs
-    for glyph_name in fontc_glyphs.keys() & fontmake_glyphs.keys():
-        fontc_glyph = fontc_glyphs[glyph_name]
-        fontmake_glyph = fontmake_glyphs[glyph_name]
+    for glyph_name in tool_1_glyphs.keys() & tool_2_glyphs.keys():
+        tool_1_glyph = tool_1_glyphs[glyph_name]
+        tool_2_glyph = tool_2_glyphs[glyph_name]
 
-        fontc_contours = fontc_glyph.xpath("./contour")
-        fontmake_contours = fontmake_glyph.xpath("./contour")
+        tool_1_contours = tool_1_glyph.xpath("./contour")
+        tool_2_contours = tool_2_glyph.xpath("./contour")
 
         # Skip glyphs with mismatched contour counts
-        if len(fontc_contours) != len(fontmake_contours):
+        if len(tool_1_contours) != len(tool_2_contours):
             continue
 
         # Normalize all-offcurve contours to start at point closest to origin
-        for contour in fontc_contours + fontmake_contours:
+        for contour in tool_1_contours + tool_2_contours:
             normalize_all_offcurve_starting_point(contour)
 
         # Compare contours as sets to see if they're identical (ignoring order)
-        fontc_strings = {to_xml_string(c) for c in fontc_contours}
-        fontmake_strings = {to_xml_string(c) for c in fontmake_contours}
+        tool_1_strings = {to_xml_string(c) for c in tool_1_contours}
+        tool_2_strings = {to_xml_string(c) for c in tool_2_contours}
 
-        if fontc_strings == fontmake_strings:
+        if tool_1_strings == tool_2_strings:
             # Contours are identical, just in different order - normalize both
-            _normalize_single_glyph(fontc_glyph, fontc_contours, fontc_point_orders)
             _normalize_single_glyph(
-                fontmake_glyph, fontmake_contours, fontmake_point_orders
+                tool_1_glyph, tool_1_contours, tool_1_point_orders
+            )
+            _normalize_single_glyph(
+                tool_2_glyph, tool_2_contours, tool_2_point_orders
             )
         # If sets don't match, skip normalization - leave original order
 
-    return fontc_point_orders, fontmake_point_orders
+    return tool_1_point_orders, tool_2_point_orders
 
 
 def _normalize_single_glyph(
