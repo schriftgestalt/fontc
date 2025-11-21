@@ -43,7 +43,9 @@ cattrs==25.3.0
     #   statmake
     #   ufolib2
 cdifflib==1.2.9
-    # via ttx-diff
+    # via
+    #   -r resources/scripts/requirements.in
+    #   ttx-diff
 certifi==2025.10.5
     # via requests
 cffi==2.0.0
@@ -93,6 +95,7 @@ fontpens==0.2.4
     # via defcon
 fonttools[lxml,repacker,ufo,unicode,woff]==4.60.1
     # via
+    #   -r resources/scripts/requirements.in
     #   afdko
     #   axisregistry
     #   babelfont
@@ -140,6 +143,7 @@ glyphsets==1.1.0
     # via gftools
 glyphslib==6.12.2
     # via
+    #   -r resources/scripts/requirements.in
     #   bumpfontversion
     #   fontmake
     #   gftools
@@ -153,6 +157,7 @@ jinja2==3.1.6
     # via gftools
 lxml==6.0.2
     # via
+    #   -r resources/scripts/requirements.in
     #   afdko
     #   fontfeatures
     #   fonttools
@@ -217,6 +222,12 @@ pyjwt[crypto]==2.10.1
     # via pygithub
 pynacl==1.6.0
     # via pygithub
+pyobjc-core==12.1
+    # via
+    #   -r resources/scripts/requirements.in
+    #   pyobjc-framework-cocoa
+pyobjc-framework-cocoa==12.1
+    # via -r resources/scripts/requirements.in
 pyparsing==3.2.5
     # via vttlib
 python-dateutil==2.9.0.post0

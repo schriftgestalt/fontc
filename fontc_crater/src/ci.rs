@@ -17,9 +17,10 @@ use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use serde::de::DeserializeOwned;
 
 use crate::{
-    BuildType, Results, Target,
+    Results, Target,
     args::CiArgs,
     error::Error,
+    run_conf::RunConfiguration,
     ttx_diff_runner::{DiffError, DiffOutput},
 };
 
@@ -64,11 +65,18 @@ impl RunSummary {
 }
 
 pub(super) fn run_ci(args: &CiArgs) -> Result<(), Error> {
+    // This creates tool instances based on the CLI arguments.
+    let run_configuration = RunConfiguration::from_cli_args(args)?;
+
+    let target_dir = &args.out_dir;
+    let cache_dir = args.cache_dir();
+
     if !args.html_only {
         super::ttx_diff_runner::assert_can_run_script();
-        run_crater_and_save_results(args)?;
+        run_crater_and_save_results(&args.to_run, target_dir, &cache_dir, &run_configuration)?;
     }
-    html::generate(&args.out_dir)?;
+
+    html::generate(target_dir, &cache_dir, &run_configuration)?;
     // now we want to generate an html report, based on this info.
     Ok(())
 }
@@ -83,29 +91,37 @@ fn load_json_if_exists_else_default<T: DeserializeOwned + Default>(
     }
 }
 
-fn run_crater_and_save_results(args: &CiArgs) -> Result<(), Error> {
-    if !args.out_dir.exists() {
-        super::try_create_dir(&args.out_dir)?;
+fn run_crater_and_save_results(
+    to_run: &Path,
+    target_dir: &Path,
+    cache_dir: &Path,
+    run_configuration: &RunConfiguration,
+) -> Result<(), Error> {
+    if !target_dir.exists() {
+        super::try_create_dir(target_dir)?;
     }
 
     log_if_auth_or_not();
     // do this now so we error if the input file doesn't exist
-    let inputs: SourceSet = super::try_read_json(&args.to_run)?;
+    let inputs: SourceSet = super::try_read_json(to_run)?;
+    inputs.update_fonts_repo(cache_dir)?;
 
-    let summary_file = args.out_dir.join(SUMMARY_FILE);
+    let summary_file = target_dir.join(SUMMARY_FILE);
     let mut prev_runs: Vec<RunSummary> = load_json_if_exists_else_default(&summary_file)?;
     // todo: fontc_repo should be checked out by us, and have a known path
     let fontc_rev = super::get_git_rev(None).unwrap();
     let pip_freeze_sha = super::pip_freeze_sha();
-    let input_file_sha = super::get_input_sha(&args.to_run);
+    let input_file_sha = super::get_input_sha(to_run);
 
-    let cache_dir = args.cache_dir();
-    inputs.update_fonts_repo(&cache_dir)?;
     log::info!("using cache dir {}", cache_dir.display());
-    let results_cache = ResultsCache::in_dir(&cache_dir);
+    let results_cache = ResultsCache::in_dir(cache_dir);
 
     if let Some(last_run) = prev_runs.last() {
-        if last_run.fontc_rev == fontc_rev
+        if run_configuration.has_glyphs_app() {
+            log::info!(
+                "Running at least one Glyphs app tool, continuing even if no changes since last run"
+            );
+        } else if last_run.fontc_rev == fontc_rev
             && input_file_sha == last_run.input_file_sha
             && pip_freeze_sha == last_run.pip_freeze_sha
         {
@@ -119,7 +135,8 @@ fn run_crater_and_save_results(args: &CiArgs) -> Result<(), Error> {
     }
 
     let out_file = result_path_for_current_date();
-    let out_path = args.out_dir.join(&out_file);
+    let out_path = target_dir.join(&out_file);
+
     // we want to build fontc & normalizer once, and then move them out of the
     // build directory so that they aren't accidentally rebuilt or deleted
     // while we're running
@@ -127,33 +144,32 @@ fn run_crater_and_save_results(args: &CiArgs) -> Result<(), Error> {
     let (fontc_path, normalizer_path) = precompile_rust_binaries(temp_bin_dir.path());
 
     log::info!("compiled fontc to {}", fontc_path.display());
-    log::info!("compiled otl-normalizeer to {}", normalizer_path.display());
+    log::info!("compiled otl-normalizer to {}", normalizer_path.display());
 
     let ResolvedTargets {
-        mut targets,
+        targets,
         source_repos,
         failures,
-    } = make_targets(&cache_dir, &inputs.sources);
-
-    if !args.gftools {
-        targets.retain(|t| t.build == BuildType::Default);
-    }
-
-    let n_targets = targets.len();
+    } = make_targets(cache_dir, &inputs.sources, run_configuration);
 
     let context = super::ttx_diff_runner::TtxContext {
         fontc_path,
         normalizer_path,
-        source_cache: cache_dir,
+        source_cache: cache_dir.to_path_buf(),
         results_cache,
     };
 
     let began = Utc::now();
-    let results = super::run_all(targets, &context, super::ttx_diff_runner::run_ttx_diff)?
-        .into_iter()
-        .collect();
+    let results: DiffResults = super::run_all(
+        targets.clone(),
+        &context,
+        super::ttx_diff_runner::run_ttx_diff,
+    )?
+    .into_iter()
+    .collect();
     let finished = Utc::now();
 
+    let n_targets = targets.len();
     let elapsed = finished.signed_duration_since(began);
     let elapsed = elapsed.to_std().unwrap_or_default();
     let elapsed = super::human_readable_duration(elapsed);
@@ -189,9 +205,9 @@ fn run_crater_and_save_results(args: &CiArgs) -> Result<(), Error> {
     super::try_write_json(&results, &out_path)?;
     // we write the map of target -> source repo to a separate file because
     // otherwise we're basically duplicating it for each run.
-    let sources_file = args.out_dir.join(SOURCES_FILE);
+    let sources_file = target_dir.join(SOURCES_FILE);
     super::try_write_json(&source_repos, &sources_file)?;
-    let failures_file = args.out_dir.join(FAILED_REPOS_FILE);
+    let failures_file = target_dir.join(FAILED_REPOS_FILE);
     super::try_write_json(&failures, &failures_file)
 }
 
@@ -222,21 +238,11 @@ struct ResolvedTargets {
     failures: BTreeMap<String, String>,
 }
 
-impl ResolvedTargets {
-    // it's possible for multiple config files to reference the same source.
-    //
-    // This might make sense for a gftools build, but for a default build it's
-    // going to just be duplicate work, so we can remove these.
-    fn remove_duplicate_default_targets(&mut self) {
-        let mut seen = HashSet::new();
-        let empty = Path::new("");
-        self.targets.retain(|targ| {
-            targ.build != BuildType::Default || seen.insert(targ.source_path(empty))
-        });
-    }
-}
-
-fn make_targets(cache_dir: &Path, repos: &[FontSource]) -> ResolvedTargets {
+fn make_targets(
+    cache_dir: &Path,
+    repos: &[FontSource],
+    run_configuration: &RunConfiguration,
+) -> ResolvedTargets {
     // first instantiate every repo in parallel:
     preflight_all_repos(cache_dir, repos);
     let mut result = ResolvedTargets::default();
@@ -292,21 +298,36 @@ fn make_targets(cache_dir: &Path, repos: &[FontSource]) -> ResolvedTargets {
                 log::warn!("missing source '{}'", src_path.display());
                 continue;
             }
-            let default = Target::new(
-                &repo_dir,
-                repo.git_rev(),
-                config_path,
-                repo.config_is_external(),
-                source,
-            );
-            let gftools = should_build_in_gftools_mode(&src_path, &config)
-                .then(|| default.to_gftools_target());
-            result.targets.push(default);
-            result.targets.extend(gftools);
+
+            for target_pair in &run_configuration.tool_pairs {
+                if target_pair.has_gftools() && !buildable_with_gftools(&src_path, &config) {
+                    log::warn!(
+                        "skipping target with `gftools` for source '{}', not buildable",
+                        src_path.display()
+                    );
+                    continue;
+                }
+                if target_pair.has_glyphs_app() && !buildable_with_glyphs_app(&src_path) {
+                    log::warn!(
+                        "skipping target with Glyphs app for source '{}', not buildable",
+                        src_path.display()
+                    );
+                    continue;
+                }
+
+                let target = Target::new(
+                    &repo_dir,
+                    repo.git_rev(),
+                    config_path,
+                    repo.config_is_external(),
+                    source,
+                    target_pair.clone(),
+                );
+                result.targets.push(target);
+            }
         }
     }
 
-    result.remove_duplicate_default_targets();
     result
 }
 
@@ -324,7 +345,7 @@ fn preflight_all_repos(cache_dir: &Path, sources: &[FontSource]) {
     });
 }
 
-fn should_build_in_gftools_mode(src_path: &Path, config: &Config) -> bool {
+fn buildable_with_gftools(src_path: &Path, config: &Config) -> bool {
     let file_stem = src_path
         .file_stem()
         .map(|s| s.to_string_lossy())
@@ -348,6 +369,15 @@ fn should_build_in_gftools_mode(src_path: &Path, config: &Config) -> bool {
         .as_ref()
         .filter(|provider| *provider != "googlefonts")
         .is_none()
+}
+
+fn buildable_with_glyphs_app(src_path: &Path) -> bool {
+    // Accept only `.glyphs` and `.glyphspackage` files.
+    let extension = src_path
+        .extension()
+        .map(|s| s.to_string_lossy())
+        .unwrap_or_default();
+    extension.to_lowercase().starts_with("glyphs")
 }
 
 fn precompile_rust_binaries(temp_dir: &Path) -> (PathBuf, PathBuf) {
