@@ -20,17 +20,8 @@
 //! build number from the app bundles and use them in the tool names.
 
 use crate::{
-    args::{
-        CiArgs, 
-        Preset, 
-        ToolTypeCli
-    },
-    tool::{
-        Tool, 
-        ToolConversionError, 
-        ToolType,
-        ToolPair,
-    },
+    args::{CiArgs, Preset, ToolTypeCli},
+    tool::{Tool, ToolConversionError, ToolPair, ToolType},
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -43,47 +34,50 @@ impl RunConfiguration {
         // Note: Because of the complex relationship between the arguments for presets,
         // tool types and tool paths, we cannot use the `ArgGroup` feature of `clap`.
         // Instead, we match on all five optional arguments.
-        match (args.preset, args.tool_1_type, args.tool_1_path.as_ref(), args.tool_2_type, args.tool_2_path.as_ref()) {
-
+        match (
+            args.preset,
+            args.tool_1_type,
+            args.tool_1_path.as_ref(),
+            args.tool_2_type,
+            args.tool_2_path.as_ref(),
+        ) {
             // Default preset. Ignore tool types and paths.
-            (Some(Preset::Default), _, _, _, _) => {
-                Ok(RunConfiguration {
-                    tool_pairs: vec![
-                        ToolPair {
-                            tool_1: Tool::from_cli_args(ToolTypeCli::StandaloneFontc, None)?,
-                            tool_2: Tool::from_cli_args(ToolTypeCli::StandaloneFontmake, None)?,
-                        },
-                    ],
-                })
-            },
+            (Some(Preset::Default), _, _, _, _) => Ok(RunConfiguration {
+                tool_pairs: vec![ToolPair {
+                    tool_1: Tool::from_cli_args(ToolTypeCli::StandaloneFontc, None)?,
+                    tool_2: Tool::from_cli_args(ToolTypeCli::StandaloneFontmake, None)?,
+                }],
+            }),
 
             // GFTools preset. Ignore tool types and paths.
-            (Some(Preset::GfTools), _, _, _, _) => {
-                Ok(RunConfiguration {
-                    tool_pairs: vec![
-                        ToolPair {
-                            tool_1: Tool::from_cli_args(ToolTypeCli::StandaloneFontc, None)?,
-                            tool_2: Tool::from_cli_args(ToolTypeCli::StandaloneFontmake, None)?,
-                        },
-                        ToolPair {
-                            tool_1: Tool::from_cli_args(ToolTypeCli::GfToolsFontc, None)?,
-                            tool_2: Tool::from_cli_args(ToolTypeCli::GfToolsFontmake, None)?,
-                        },
-                    ],
-                })
-            },
+            (Some(Preset::GfTools), _, _, _, _) => Ok(RunConfiguration {
+                tool_pairs: vec![
+                    ToolPair {
+                        tool_1: Tool::from_cli_args(ToolTypeCli::StandaloneFontc, None)?,
+                        tool_2: Tool::from_cli_args(ToolTypeCli::StandaloneFontmake, None)?,
+                    },
+                    ToolPair {
+                        tool_1: Tool::from_cli_args(ToolTypeCli::GfToolsFontc, None)?,
+                        tool_2: Tool::from_cli_args(ToolTypeCli::GfToolsFontmake, None)?,
+                    },
+                ],
+            }),
 
             // Glyphs app preset. Ignore tool types.
             (Some(Preset::GlyphsApp), _, Some(tool_1_path), _, Some(tool_2_path)) => {
                 Ok(RunConfiguration {
-                    tool_pairs: vec![
-                        ToolPair {
-                            tool_1: Tool::from_cli_args(ToolTypeCli::GlyphsApp, Some(tool_1_path.into()))?,
-                            tool_2: Tool::from_cli_args(ToolTypeCli::GlyphsApp, Some(tool_2_path.into()))?,
-                        },
-                    ],
+                    tool_pairs: vec![ToolPair {
+                        tool_1: Tool::from_cli_args(
+                            ToolTypeCli::GlyphsApp,
+                            Some(tool_1_path.into()),
+                        )?,
+                        tool_2: Tool::from_cli_args(
+                            ToolTypeCli::GlyphsApp,
+                            Some(tool_2_path.into()),
+                        )?,
+                    }],
                 })
-            },
+            }
 
             // Two tool types specified, no preset.
             (None, Some(tool_1_type), tool_1_path, Some(tool_2_type), tool_2_path) => {
@@ -108,18 +102,16 @@ impl RunConfiguration {
                 }
 
                 Ok(RunConfiguration {
-                    tool_pairs: vec![
-                        ToolPair {
-                            tool_1: tool_1,
-                            tool_2: tool_2,
-                        },
-                    ],
+                    tool_pairs: vec![ToolPair {
+                        tool_1: tool_1,
+                        tool_2: tool_2,
+                    }],
                 })
-            },
+            }
 
             _ => {
                 return Err(RunConfigurationError::InvalidCliArguments);
-            },
+            }
         }
     }
 
@@ -160,7 +152,9 @@ impl RunConfiguration {
 
 #[derive(thiserror::Error, Debug)]
 pub enum RunConfigurationError {
-    #[error("Invalid CLI arguments: Specify either a preset or two tool types, including paths if required")]
+    #[error(
+        "Invalid CLI arguments: Specify either a preset or two tool types, including paths if required"
+    )]
     InvalidCliArguments,
 
     #[error("Invalid combination of tool types: {0}, {1}")]

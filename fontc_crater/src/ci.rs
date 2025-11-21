@@ -17,15 +17,11 @@ use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use serde::de::DeserializeOwned;
 
 use crate::{
-    Results,
-    Target,
+    Results, Target,
     args::CiArgs,
     error::Error,
     run_conf::RunConfiguration,
-    ttx_diff_runner::{
-        DiffError, 
-        DiffOutput
-    },
+    ttx_diff_runner::{DiffError, DiffOutput},
 };
 
 mod html;
@@ -99,7 +95,7 @@ fn run_crater_and_save_results(
     to_run: &Path,
     target_dir: &Path,
     cache_dir: &Path,
-    run_configuration: &RunConfiguration
+    run_configuration: &RunConfiguration,
 ) -> Result<(), Error> {
     if !target_dir.exists() {
         super::try_create_dir(target_dir)?;
@@ -122,9 +118,10 @@ fn run_crater_and_save_results(
 
     if let Some(last_run) = prev_runs.last() {
         if run_configuration.has_glyphs_app() {
-            log::info!("Running at least one Glyphs app tool, continuing even if no changes since last run");
-        }
-        else if last_run.fontc_rev == fontc_rev
+            log::info!(
+                "Running at least one Glyphs app tool, continuing even if no changes since last run"
+            );
+        } else if last_run.fontc_rev == fontc_rev
             && input_file_sha == last_run.input_file_sha
             && pip_freeze_sha == last_run.pip_freeze_sha
         {
@@ -163,9 +160,13 @@ fn run_crater_and_save_results(
     };
 
     let began = Utc::now();
-    let results: DiffResults = super::run_all(targets.clone(), &context, super::ttx_diff_runner::run_ttx_diff)?
-        .into_iter()
-        .collect();
+    let results: DiffResults = super::run_all(
+        targets.clone(),
+        &context,
+        super::ttx_diff_runner::run_ttx_diff,
+    )?
+    .into_iter()
+    .collect();
     let finished = Utc::now();
 
     let n_targets = targets.len();
@@ -238,9 +239,9 @@ struct ResolvedTargets {
 }
 
 fn make_targets(
-    cache_dir: &Path, 
-    repos: &[FontSource], 
-    run_configuration: &RunConfiguration
+    cache_dir: &Path,
+    repos: &[FontSource],
+    run_configuration: &RunConfiguration,
 ) -> ResolvedTargets {
     // first instantiate every repo in parallel:
     preflight_all_repos(cache_dir, repos);

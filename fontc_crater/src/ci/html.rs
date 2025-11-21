@@ -9,18 +9,14 @@ use std::{
 };
 
 use crate::{
-    ci::RunConfiguration,
-    tool::{
-        Tool, 
-        ToolType,
-        ToolManagement,
-    },
-    error::Error,
     Target,
+    ci::RunConfiguration,
+    error::Error,
+    tool::{Tool, ToolManagement, ToolType},
     ttx_diff_runner::{CompilerFailure, DiffError, DiffOutput, DiffValue},
 };
 
-use maud::{html, Markup, PreEscaped};
+use maud::{Markup, PreEscaped, html};
 
 use super::{DiffResults, RunSummary};
 
@@ -77,7 +73,7 @@ pub(super) fn generate(
         prev.as_ref(),
         &failures,
         &annotations,
-        cache_dir, 
+        cache_dir,
         run_configuration,
     )?;
     let outpath = target_dir.join(HTML_FILE);
@@ -125,7 +121,15 @@ fn make_html(
         }
     };
     let detailed_report = match prev {
-        Some(prev) => make_detailed_report(current, prev, sources, annotations, cache_dir, &tool_1_category_name, &tool_2_category_name),
+        Some(prev) => make_detailed_report(
+            current,
+            prev,
+            sources,
+            annotations,
+            cache_dir,
+            &tool_1_category_name,
+            &tool_2_category_name,
+        ),
 
         _ => html!(),
     };
@@ -269,7 +273,7 @@ fn make_introduction(tool_1_category_type: &ToolType, tool_2_category_type: &Too
             ", comparing the results."
         };
     }
-    
+
     // We have two different tool types.
     html! {
         "Compiling all known Google Fonts that have compatible sources with "
@@ -445,12 +449,12 @@ fn make_detailed_report(
         ),
         make_summary_report(current),
         make_error_report(
-            current, 
-            prev, 
-            sources, 
-            cache_dir, 
-            tool_1_category_name, 
-            tool_2_category_name
+            current,
+            prev,
+            sources,
+            cache_dir,
+            tool_1_category_name,
+            tool_2_category_name,
         ),
     ];
     html! {
@@ -615,8 +619,12 @@ fn make_diff_report(
         let decoration = make_delta_decoration(*ratio, prev_ratio, More::IsBetter);
         let changed_tag_list = list_different_tables(diff_details).unwrap_or_default();
 
-        let diff_table =
-            format_diff_report_detail_table(diff_details, prev_details, tool_1_category_name, tool_2_category_name);
+        let diff_table = format_diff_report_detail_table(
+            diff_details,
+            prev_details,
+            tool_1_category_name,
+            tool_2_category_name,
+        );
 
         let annotation_list = format_annotations(target, annotations);
 
@@ -702,9 +710,11 @@ fn format_annotations(target: &Target, annotations: &BTreeMap<Target, Vec<Annota
 fn make_target_description(target: &Target) -> Markup {
     let bare_path = target.source_path(Path::new(""));
     let source = bare_path.file_name().unwrap().to_str().unwrap();
-    let annotation = format!("{} + {}", 
-        annotation_for_tool(&target.tool_1(), target), 
-        annotation_for_tool(&target.tool_2(), target));
+    let annotation = format!(
+        "{} + {}",
+        annotation_for_tool(&target.tool_1(), target),
+        annotation_for_tool(&target.tool_2(), target)
+    );
     html! {
         (source)
             " "
@@ -716,9 +726,11 @@ fn annotation_for_tool(tool: &Tool, target: &Target) -> String {
     let name = tool.versioned_name();
 
     match tool.tool_management() {
-        ToolManagement::ManagedByGfTools if target.config.file_stem() != Some(OsStr::new("config"))=> {
+        ToolManagement::ManagedByGfTools
+            if target.config.file_stem() != Some(OsStr::new("config")) =>
+        {
             format!("{}, {}", name, target.config.display())
-        },
+        }
         _ => name.to_string(),
     }
 }
@@ -750,7 +762,7 @@ fn make_error_report(
 
     let current_other = get_other_failures(current);
     let prev_other = get_other_failures(prev);
-    
+
     let tool_1 = if current_tool_1.len() - current_both.len() > 0 {
         make_error_report_group(
             tool_1_category_name.as_ref(),
@@ -1005,7 +1017,8 @@ fn make_error_report_group<'a>(
     sources: &BTreeMap<PathBuf, String>,
     cache_dir: &Path,
 ) -> Markup {
-    let items = make_error_report_group_items(paths_and_if_is_new_error, details, sources, cache_dir);
+    let items =
+        make_error_report_group_items(paths_and_if_is_new_error, details, sources, cache_dir);
 
     let elem_id = format!("{id_prefix}-failures");
     html! {

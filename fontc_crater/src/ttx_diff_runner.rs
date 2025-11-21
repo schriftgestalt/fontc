@@ -1,18 +1,9 @@
-use std::{
-    collections::BTreeMap,
-    path::PathBuf,
-    process::Command,
-};
+use std::{collections::BTreeMap, path::PathBuf, process::Command};
 
 use crate::{
-    ci::ResultsCache, 
-    Results, 
-    RunResult, 
-    Target,
-    tool::{
-        ToolManagement, 
-        ToolType,
-    },
+    Results, RunResult, Target,
+    ci::ResultsCache,
+    tool::{ToolManagement, ToolType},
 };
 
 // Run ttx-diff via python -m to ensure we use the venv's installed version
@@ -40,35 +31,38 @@ pub(super) fn run_ttx_diff(ctx: &TtxContext, target: &Target) -> RunResult<DiffO
         .copy_cached_files_to_build_dir(target, &build_dir);
 
     let mut cmd = Command::new("python3");
-    cmd.arg("-m").arg(TTX_DIFF_MODULE)
+    cmd.arg("-m")
+        .arg(TTX_DIFF_MODULE)
         .arg("--json")
-        .arg("--outdir").arg(outdir)
-        .arg("--normalizer_path").arg(&ctx.normalizer_path);
+        .arg("--outdir")
+        .arg(outdir)
+        .arg("--normalizer_path")
+        .arg(&ctx.normalizer_path);
 
     cmd.arg("--tool_1_type").arg(tool_1.unversioned_name());
     match tool_1.tool_type() {
         ToolType::Fontc => {
             cmd.arg("--tool_1_path").arg(&ctx.fontc_path);
-        },
+        }
         ToolType::GlyphsApp => {
             if let Some(bundle_path) = tool_1.bundle_path() {
                 cmd.arg("--tool_1_path").arg(bundle_path);
             }
-        },
-        _ => {},
+        }
+        _ => {}
     }
 
     cmd.arg("--tool_2_type").arg(tool_2.unversioned_name());
     match tool_2.tool_type() {
         ToolType::Fontc => {
             cmd.arg("--tool_2_path").arg(&ctx.fontc_path);
-        },
+        }
         ToolType::GlyphsApp => {
             if let Some(bundle_path) = tool_2.bundle_path() {
                 cmd.arg("--tool_2_path").arg(bundle_path);
             }
-        },
-        _ => {},
+        }
+        _ => {}
     }
 
     let rebuild = match (tool_1.tool_type(), tool_2.tool_type()) {
@@ -78,8 +72,9 @@ pub(super) fn run_ttx_diff(ctx: &TtxContext, target: &Target) -> RunResult<DiffO
     };
     cmd.args(["--rebuild", rebuild]);
 
-    if tool_1.tool_management() == ToolManagement::ManagedByGfTools ||
-       tool_2.tool_management() == ToolManagement::ManagedByGfTools {
+    if tool_1.tool_management() == ToolManagement::ManagedByGfTools
+        || tool_2.tool_management() == ToolManagement::ManagedByGfTools
+    {
         cmd.arg("--config")
             .arg(target.config_path(&ctx.source_cache));
     }
@@ -212,7 +207,7 @@ impl Summary {
                     // If we get here, both compilers succeeded. This should not happen, but we should not panic either
                     log::warn!("Unexpected `CompileFailed` without errors for tool_1 or tool_2");
                     other_failure += 1
-                },
+                }
                 DiffError::Other(_) => other_failure += 1,
             }
         }

@@ -47,10 +47,10 @@ pub(super) enum Preset {
     /// Run the default tools (`fontmake` and `fontc` directly), plus `fontmake`
     /// and `fontc` via `gftools`.
     GfTools,
-    
+
     /// Run only the default tools (reduces target count when running locally).
     Default,
-    
+
     /// Run two Glyphs app versions. Requires `--tool-1-path` and `--tool-2-path`
     /// to be set.
     GlyphsApp,
@@ -86,7 +86,7 @@ pub(super) struct CiArgs {
     ///
     /// `default` sets tool 1 to `fontmake` and tool 2 to `fontc`.
     ///
-    /// `gftools` is like `default` but adds a second set of tools, 
+    /// `gftools` is like `default` but adds a second set of tools,
     /// `fontmake_gftools` and `fontc_gftools`.
     ///
     /// `glyphsapp` sets both tools to an instance of the Glyphs app, requiring

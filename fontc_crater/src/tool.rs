@@ -1,10 +1,4 @@
-use std::{
-    fmt::Display,
-    fs::File,
-    path::Path,
-    path::PathBuf,
-    str::FromStr,
-};
+use std::{fmt::Display, fs::File, path::Path, path::PathBuf, str::FromStr};
 
 use plist::Value;
 use serde::{Deserialize, Serialize};
@@ -26,16 +20,15 @@ impl ToolType {
             Self::GlyphsApp => "glyphsapp",
         }
     }
-    
+
     pub fn url(&self) -> &'static str {
         match self {
-            Self::Fontc     => "https://github.com/googlefonts/fontc",
-            Self::Fontmake  => "https://github.com/googlefonts/fontmake",
+            Self::Fontc => "https://github.com/googlefonts/fontc",
+            Self::Fontmake => "https://github.com/googlefonts/fontmake",
             Self::GlyphsApp => "https://glyphsapp.com/",
         }
     }
 }
-
 
 impl Display for ToolType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -164,22 +157,26 @@ impl<'de> Deserialize<'de> for Tool {
 }
 
 impl Tool {
-    pub fn from_cli_args(cli_tool_type: ToolTypeCli, tool_path: Option<PathBuf>) -> Result<Self, ToolConversionError> {
+    pub fn from_cli_args(
+        cli_tool_type: ToolTypeCli,
+        tool_path: Option<PathBuf>,
+    ) -> Result<Self, ToolConversionError> {
         match cli_tool_type {
             // Simple conversions:
-            ToolTypeCli::StandaloneFontc    => Ok(Tool::Fontc(ToolManagement::Standalone)),
+            ToolTypeCli::StandaloneFontc => Ok(Tool::Fontc(ToolManagement::Standalone)),
             ToolTypeCli::StandaloneFontmake => Ok(Tool::Fontmake(ToolManagement::Standalone)),
-            ToolTypeCli::GfToolsFontc       => Ok(Tool::Fontc(ToolManagement::ManagedByGfTools)),
-            ToolTypeCli::GfToolsFontmake    => Ok(Tool::Fontmake(ToolManagement::ManagedByGfTools)),
+            ToolTypeCli::GfToolsFontc => Ok(Tool::Fontc(ToolManagement::ManagedByGfTools)),
+            ToolTypeCli::GfToolsFontmake => Ok(Tool::Fontmake(ToolManagement::ManagedByGfTools)),
 
             // Glyphs app tool requires additional properties:
             ToolTypeCli::GlyphsApp => {
-                let bundle_path = tool_path.ok_or(ToolConversionError::ToolPathRequired(ToolType::GlyphsApp))?;
+                let bundle_path =
+                    tool_path.ok_or(ToolConversionError::ToolPathRequired(ToolType::GlyphsApp))?;
                 let tool_version = macos_app_bundle_version(&bundle_path)
                     .map_err(ToolConversionError::ToolVersionNotDetermined)?;
 
                 Ok(Tool::GlyphsApp(bundle_path, tool_version))
-            },
+            }
         }
     }
 
@@ -220,7 +217,11 @@ impl Tool {
     pub fn unversioned_name(&self) -> String {
         match self {
             Self::GlyphsApp(_, _) => self.tool_type().name().to_string(),
-            _ => format!("{}{}", self.tool_type().name(), self.tool_management().name_suffix()),
+            _ => format!(
+                "{}{}",
+                self.tool_type().name(),
+                self.tool_management().name_suffix()
+            ),
         }
     }
 
@@ -231,8 +232,13 @@ impl Tool {
     pub fn versioned_name(&self) -> String {
         match self {
             Self::GlyphsApp(_, tool_version) => {
-                format!("{}_{}_{}", self.tool_type().name(), tool_version.version_number, tool_version.build_number)
-            },
+                format!(
+                    "{}_{}_{}",
+                    self.tool_type().name(),
+                    tool_version.version_number,
+                    tool_version.build_number
+                )
+            }
             _ => self.unversioned_name(),
         }
     }
@@ -242,9 +248,16 @@ impl Tool {
     pub fn pretty_name(&self) -> String {
         match self {
             Self::GlyphsApp(_, tool_version) => {
-                format!("Glyphs {} ({})", tool_version.version_number, tool_version.build_number)
-            },
-            _ => format!("{} ({})", self.tool_type().name(), self.tool_management().description()),
+                format!(
+                    "Glyphs {} ({})",
+                    tool_version.version_number, tool_version.build_number
+                )
+            }
+            _ => format!(
+                "{} ({})",
+                self.tool_type().name(),
+                self.tool_management().description()
+            ),
         }
     }
 }
@@ -257,21 +270,20 @@ pub struct ToolPair {
 
 impl ToolPair {
     pub fn has_gftools(&self) -> bool {
-        self.tool_1.tool_management() == ToolManagement::ManagedByGfTools ||
-        self.tool_2.tool_management() == ToolManagement::ManagedByGfTools
+        self.tool_1.tool_management() == ToolManagement::ManagedByGfTools
+            || self.tool_2.tool_management() == ToolManagement::ManagedByGfTools
     }
 
     pub fn has_glyphs_app(&self) -> bool {
-        self.tool_1.tool_type() == ToolType::GlyphsApp || 
-        self.tool_2.tool_type() == ToolType::GlyphsApp
+        self.tool_1.tool_type() == ToolType::GlyphsApp
+            || self.tool_2.tool_type() == ToolType::GlyphsApp
     }
 }
 
-pub fn macos_app_bundle_version<P: AsRef<Path>>(bundle_path: P) -> Result<ToolVersion, ToolVersionError> {
-    let info_plist = bundle_path
-        .as_ref()
-        .join("Contents")
-        .join("Info.plist");
+pub fn macos_app_bundle_version<P: AsRef<Path>>(
+    bundle_path: P,
+) -> Result<ToolVersion, ToolVersionError> {
+    let info_plist = bundle_path.as_ref().join("Contents").join("Info.plist");
 
     if !info_plist.exists() {
         return Err(ToolVersionError::InfoPlistNotFound(info_plist));
@@ -295,8 +307,8 @@ pub fn macos_app_bundle_version<P: AsRef<Path>>(bundle_path: P) -> Result<ToolVe
 
     match (version_number, build_number) {
         (Some(version_number), Some(build_number)) => Ok(ToolVersion {
-            version_number, 
-            build_number
+            version_number,
+            build_number,
         }),
         _ => Err(ToolVersionError::VersionNotFound(info_plist)),
     }

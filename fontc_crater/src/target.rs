@@ -11,12 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     args::DEFAULT_CACHE_DIR,
-    tool::{
-        Tool, 
-        ToolType,
-        ToolManagement,
-        ToolPair,
-    },
+    tool::{Tool, ToolManagement, ToolPair, ToolType},
 };
 
 fn default_cache_dir() -> PathBuf {
@@ -110,14 +105,8 @@ impl Target {
 
     // if a target was built in a directory with a sha, the repro command
     // does not need to include that part of the directory, so remove it.
-    fn config_path_stripping_disambiguating_sha_if_necessary(
-        &self,
-        cache_dir: &Path,
-    ) -> String {
-        let mut path = self
-            .config_path(cache_dir)
-            .display()
-            .to_string();
+    fn config_path_stripping_disambiguating_sha_if_necessary(&self, cache_dir: &Path) -> String {
+        let mut path = self.config_path(cache_dir).display().to_string();
         // NOTE: this relies on the fact that we always trim the sha to 10 chars,
         // both when we create a target and in google-fonts-sources when we
         // create the disambiguated checkout directory.
@@ -182,8 +171,9 @@ impl Target {
                 write!(&mut cmd, " --tool_2_path {}", tool_path.display()).unwrap();
             }
         }
-        if tool_1.tool_management() == ToolManagement::ManagedByGfTools ||
-            tool_2.tool_management() == ToolManagement::ManagedByGfTools {
+        if tool_1.tool_management() == ToolManagement::ManagedByGfTools
+            || tool_2.tool_management() == ToolManagement::ManagedByGfTools
+        {
             let config = self.config_path_stripping_disambiguating_sha_if_necessary(cache_dir);
             write!(&mut cmd, " --config {config}").unwrap();
         }
@@ -304,7 +294,7 @@ mod tests {
                 tool_1: Tool::Fontc(ToolManagement::Standalone),
                 tool_2: Tool::Fontmake(ToolManagement::Standalone),
             },
-        );    
+        );
 
         let asstr = target.to_string();
 
@@ -358,7 +348,10 @@ mod tests {
 
         let cache_dir = default_cache_dir();
         let hmm = target.config_path_stripping_disambiguating_sha_if_necessary(&cache_dir);
-        assert_eq!(hmm, format!("{DEFAULT_CACHE_DIR}/org/repo/Sources/hmm.yaml"))
+        assert_eq!(
+            hmm,
+            format!("{DEFAULT_CACHE_DIR}/org/repo/Sources/hmm.yaml")
+        )
     }
 
     #[test]
