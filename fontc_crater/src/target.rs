@@ -19,8 +19,6 @@ use crate::{
     },
 };
 
-static VIRTUAL_CONFIG_DIR: &str = "sources";
-
 fn default_cache_dir() -> PathBuf {
     return Path::new(DEFAULT_CACHE_DIR).to_path_buf();
 }

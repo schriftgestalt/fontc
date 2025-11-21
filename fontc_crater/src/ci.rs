@@ -139,6 +139,7 @@ fn run_crater_and_save_results(
 
     let out_file = result_path_for_current_date();
     let out_path = target_dir.join(&out_file);
+
     // we want to build fontc & normalizer once, and then move them out of the
     // build directory so that they aren't accidentally rebuilt or deleted
     // while we're running
@@ -146,7 +147,7 @@ fn run_crater_and_save_results(
     let (fontc_path, normalizer_path) = precompile_rust_binaries(temp_bin_dir.path());
 
     log::info!("compiled fontc to {}", fontc_path.display());
-    log::info!("compiled otl-normalizeer to {}", normalizer_path.display());
+    log::info!("compiled otl-normalizer to {}", normalizer_path.display());
 
     let ResolvedTargets {
         targets,
