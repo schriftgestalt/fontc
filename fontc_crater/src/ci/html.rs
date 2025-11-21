@@ -80,6 +80,7 @@ pub(super) fn generate(
     crate::try_write_str(&html_text, &outpath)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn make_html(
     summary: &[RunSummary],
     sources: &BTreeMap<PathBuf, String>,
@@ -712,8 +713,8 @@ fn make_target_description(target: &Target) -> Markup {
     let source = bare_path.file_name().unwrap().to_str().unwrap();
     let annotation = format!(
         "{} + {}",
-        annotation_for_tool(&target.tool_1(), target),
-        annotation_for_tool(&target.tool_2(), target)
+        annotation_for_tool(target.tool_1(), target),
+        annotation_for_tool(target.tool_2(), target)
     );
     html! {
         (source)
@@ -765,7 +766,7 @@ fn make_error_report(
 
     let tool_1 = if current_tool_1.len() - current_both.len() > 0 {
         make_error_report_group(
-            tool_1_category_name.as_ref(),
+            tool_1_category_name,
             TOOL_1_NAME,
             current_tool_1
                 .keys()
@@ -788,7 +789,7 @@ fn make_error_report(
 
     let tool_2 = if current_tool_2.len() - current_both.len() > 0 {
         make_error_report_group(
-            tool_2_category_name.as_ref(),
+            tool_2_category_name,
             TOOL_2_NAME,
             current_tool_2
                 .keys()

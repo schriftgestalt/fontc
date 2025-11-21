@@ -15,7 +15,7 @@ use crate::{
 };
 
 fn default_cache_dir() -> PathBuf {
-    return Path::new(DEFAULT_CACHE_DIR).to_path_buf();
+    Path::new(DEFAULT_CACHE_DIR).to_path_buf()
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -160,16 +160,16 @@ impl Target {
             rel_source_path.display()
         );
         write!(&mut cmd, " --tool_1_type {}", tool_1.unversioned_name()).unwrap();
-        if tool_1.tool_type() == ToolType::GlyphsApp {
-            if let Some(tool_path) = &tool_1.bundle_path() {
-                write!(&mut cmd, " --tool_1_path {}", tool_path.display()).unwrap();
-            }
+        if tool_1.tool_type() == ToolType::GlyphsApp
+            && let Some(tool_path) = &tool_1.bundle_path()
+        {
+            write!(&mut cmd, " --tool_1_path {}", tool_path.display()).unwrap();
         }
         write!(&mut cmd, " --tool_2_type {}", tool_2.unversioned_name()).unwrap();
-        if tool_2.tool_type() == ToolType::GlyphsApp {
-            if let Some(tool_path) = &tool_2.bundle_path() {
-                write!(&mut cmd, " --tool_2_path {}", tool_path.display()).unwrap();
-            }
+        if tool_2.tool_type() == ToolType::GlyphsApp
+            && let Some(tool_path) = &tool_2.bundle_path()
+        {
+            write!(&mut cmd, " --tool_2_path {}", tool_path.display()).unwrap();
         }
         if tool_1.tool_management() == ToolManagement::ManagedByGfTools
             || tool_2.tool_management() == ToolManagement::ManagedByGfTools

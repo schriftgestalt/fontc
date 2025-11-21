@@ -104,7 +104,7 @@ fn run_crater_and_save_results(
     log_if_auth_or_not();
     // do this now so we error if the input file doesn't exist
     let inputs: SourceSet = super::try_read_json(to_run)?;
-    inputs.update_fonts_repo(&cache_dir)?;
+    inputs.update_fonts_repo(cache_dir)?;
 
     let summary_file = target_dir.join(SUMMARY_FILE);
     let mut prev_runs: Vec<RunSummary> = load_json_if_exists_else_default(&summary_file)?;

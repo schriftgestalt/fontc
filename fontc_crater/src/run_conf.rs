@@ -102,16 +102,11 @@ impl RunConfiguration {
                 }
 
                 Ok(RunConfiguration {
-                    tool_pairs: vec![ToolPair {
-                        tool_1: tool_1,
-                        tool_2: tool_2,
-                    }],
+                    tool_pairs: vec![ToolPair { tool_1, tool_2 }],
                 })
             }
 
-            _ => {
-                return Err(RunConfigurationError::InvalidCliArguments);
-            }
+            _ => Err(RunConfigurationError::InvalidCliArguments),
         }
     }
 
