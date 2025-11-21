@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Helper for comparing `fontc` (Rust) vs `fontmake` (Python) or Glyphs 3 vs 
+"""Helper for comparing `fontc` (Rust) vs `fontmake` (Python) or Glyphs 3 vs
 Glyphs 4 binaries.
 
 Turns each into `ttx`, eliminates expected sources of difference and prints
@@ -13,8 +13,8 @@ Usage:
     # Rebuild with `fontc` and `fontmake` and compare.
     python resources/scripts/ttx_diff.py --tool_1_type fontc --tool_2_type fontmake ../OswaldFont/sources/Oswald.glyphs
 
-    # Rebuild the `fontc` copy, reuse the prior `fontmake` copy (if present), 
-    # and compare. Useful if you are making changes to `fontc` meant to narrow 
+    # Rebuild the `fontc` copy, reuse the prior `fontmake` copy (if present),
+    # and compare. Useful if you are making changes to `fontc` meant to narrow
     # the diff.
     python resources/scripts/ttx_diff.py --tool_1_type fontc --tool_2_type fontmake --rebuild fontc ../OswaldFont/sources/Oswald.glyphs
 
@@ -25,15 +25,15 @@ Usage:
     # Rebuild with Glyphs 3 and Glyphs 4 and compare. The paths to the app
     # bundles have to be specified (see below for an exception to this).
     python resources/scripts/ttx_diff.py --tool_1_type glyphsapp --tool_1_path '/Applications/Glyphs 3.3.1 (3343).app' --tool_2_type glyphsapp --tool_2_path '/Applications/Glyphs 4.0a (3837).app' ../OswaldFont/sources/Oswald.glyphs
-    
+
     # For debugging of Glyphs app only: Rebuild with Glyphs 3 and Glyphs 4 and compare.
     # If tool path 1 is missing, tool 1 is automatically set to Glyphs 3, and likewise
     # tool 2 to Glyphs 4. Running instances are opened if possible.
-    # The instances are _not_ terminated after the builds. Please note that this conflicts 
-    # with `fontc_crater` builds, which expect to be able to launch multiple instances 
+    # The instances are _not_ terminated after the builds. Please note that this conflicts
+    # with `fontc_crater` builds, which expect to be able to launch multiple instances
     # of the same Glyphs app build and thus require the instances to be terminated.
     python resources/scripts/ttx_diff.py --tool_1_type glyphsapp --tool_2_type glyphsapp ../OswaldFont/sources/Oswald.glyphs
-    
+
     # Rebuild with precompiled `fontc` binary and Glyphs 4 and compare.
     python resources/scripts/ttx_diff.py --tool_1_type fontc --tool_1_path ~/fontc/target/release/fontc --tool_2_type glyphsapp --tool_2_path '/Applications/Glyphs 4.0a (3837).app' ../OswaldFont/sources/Oswald.glyphs
 
@@ -46,9 +46,9 @@ JSON:
     'difference ratio' (where 1.0 means identical and 0.0 means maximally
     dissimilar) or, if only one compiler produced that table, the name of that
     compiler as a string ("fontc", "glyphsapp_4" etc.).
-    For example, when run in `default` or `gftools` modes, the output 
+    For example, when run in `default` or `gftools` modes, the output
     `{"success": { "GPOS": 0.99, "vmxt": "fontmake" }}` means that the "GPOS"
-    table was 99%% similar, and only `fontmake` produced the "vmtx" table (and 
+    table was 99%% similar, and only `fontmake` produced the "vmtx" table (and
     all other tables were identical).
 
     If one or both of the compilers fail to exit successfully, we will return a
@@ -56,7 +56,7 @@ JSON:
     where keys are the name of the compiler that failed, and the body is a
     dictionary with "command" and "stderr" fields, where the "command" field
     is the command that was used to run that compiler.
-    
+
 Caching:
     It is possible to specify a custom cache directory for the font
     repositories. This is especially useful when a custom cache location is used
@@ -71,27 +71,28 @@ import subprocess
 import sys
 import time
 import uuid
-import yaml
-
 from abc import ABC, abstractmethod
-from absl import app, flags
-from cdifflib import CSequenceMatcher as SequenceMatcher
 from collections import defaultdict
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from enum import IntEnum, StrEnum
+from enum import StrEnum
+from functools import cache
+from pathlib import Path
+from tempfile import NamedTemporaryFile
+from typing import Any, Callable, Dict, Generator, List, Optional, Sequence
+from urllib.parse import urlparse
+
+import yaml
+from absl import flags
+from cdifflib import CSequenceMatcher as SequenceMatcher
 from fontTools.designspaceLib import DesignSpaceDocument
 from fontTools.misc.fixedTools import otRound
 from fontTools.ttLib import TTFont
 from fontTools.varLib.iup import iup_delta
-from Foundation import NSConnection, NSDistantObject, NSObject, NSURL
-from functools import cache
+from Foundation import NSURL, NSConnection, NSDistantObject
 from glyphsLib import GSFont
 from lxml import etree
-from pathlib import Path
-from tempfile import NamedTemporaryFile
-from typing import Any, Callable, Dict, Generator, List, Optional, Sequence, Tuple
-from urllib.parse import urlparse
+
 
 # Since `absl` flags do not support overriding the generated flag names, the
 # string values should match the lowercase versions of the constants (i. e.
@@ -110,6 +111,7 @@ class ToolType(StrEnum):
     FONTMAKE_GFTOOLS = "fontmake_gftools"
 
     GLYPHSAPP = "glyphsapp"
+
 
 FONTC_NAME = "fontc"
 FONTMAKE_NAME = "fontmake"
@@ -141,66 +143,60 @@ def eprint(*objects):
 
 flags.DEFINE_enum_class(
     "tool_1_type",
-    default = None,
-    enum_class = ToolType,
-    help = "Choose the type of the first tool which should be used to build fonts to compare. Note that as of 2023-05-21, we still set flags for `fontmake` to match `fontc` behavior.",
+    default=None,
+    enum_class=ToolType,
+    help="Choose the type of the first tool which should be used to build fonts to compare. Note that as of 2023-05-21, we still set flags for `fontmake` to match `fontc` behavior.",
 )
 flags.DEFINE_string(
     "tool_1_path",
-    default = None,
-    help = "For `fontc`: Optional path to precompiled `fontc` binary to be used as tool 1.\nFor `glyphsapp`: Required path to the application bundle of the specific Glyphs app version to be used as tool 1.\nPlease note that if a different instance of the Glyphs app with the same major version is already running, that version may be used instead.",
+    default=None,
+    help="For `fontc`: Optional path to precompiled `fontc` binary to be used as tool 1.\nFor `glyphsapp`: Required path to the application bundle of the specific Glyphs app version to be used as tool 1.\nPlease note that if a different instance of the Glyphs app with the same major version is already running, that version may be used instead.",
 )
 flags.DEFINE_enum_class(
     "tool_2_type",
-    default = None,
-    enum_class = ToolType,
-    help = "Choose the type of the second tool which should be used to build fonts to compare. Note that as of 2023-05-21, we still set flags for `fontmake` to match `fontc` behavior.",
+    default=None,
+    enum_class=ToolType,
+    help="Choose the type of the second tool which should be used to build fonts to compare. Note that as of 2023-05-21, we still set flags for `fontmake` to match `fontc` behavior.",
 )
 flags.DEFINE_string(
     "tool_2_path",
-    default = None,
-    help = "For `fontc`: Optional path to precompiled `fontc` binary to be used as tool 2.\nFor `glyphsapp`: Required path to the application bundle of the specific Glyphs app version to be used as tool 2.\nPlease note that if a different instance of the Glyphs app with the same major version is already running, that version may be used instead.",
+    default=None,
+    help="For `fontc`: Optional path to precompiled `fontc` binary to be used as tool 2.\nFor `glyphsapp`: Required path to the application bundle of the specific Glyphs app version to be used as tool 2.\nPlease note that if a different instance of the Glyphs app with the same major version is already running, that version may be used instead.",
 )
 flags.DEFINE_string(
     "config",
-    default = None,
-    help = "`config.yaml` to be passed to `gftools` when using a tool managed by `gftools`",
+    default=None,
+    help="`config.yaml` to be passed to `gftools` when using a tool managed by `gftools`",
 )
 flags.DEFINE_string(
     "normalizer_path",
-    default = None,
-    help = "Optional path to precompiled `otl-normalizer` binary",
+    default=None,
+    help="Optional path to precompiled `otl-normalizer` binary",
 )
 flags.DEFINE_string(
     "cache_path",
-    default = "~/.fontc_crater_cache",
-    help = "Optional path to custom cache location for font repositories.",
+    default="~/.fontc_crater_cache",
+    help="Optional path to custom cache location for font repositories.",
 )
 flags.DEFINE_enum(
     "rebuild",
-    default = "both",
-    enum_values = ["both", TOOL_1_NAME, TOOL_2_NAME, "none"],
-    help = "Which compilers to rebuild with if the output appears to already exist. `none` is handy when playing with `ttx_diff.py` itself.",
+    default="both",
+    enum_values=["both", TOOL_1_NAME, TOOL_2_NAME, "none"],
+    help="Which compilers to rebuild with if the output appears to already exist. `none` is handy when playing with `ttx_diff.py` itself.",
 )
 flags.DEFINE_float(
     "off_by_one_budget",
-    default = 0.1,
-    help = "The percentage of point (glyf) or delta (gvar) values allowed to differ by one without counting as a diff.",
+    default=0.1,
+    help="The percentage of point (glyf) or delta (gvar) values allowed to differ by one without counting as a diff.",
 )
 flags.DEFINE_bool(
-    "json",
-    default = False,
-    help = "Print results in machine-readable JSON format."
+    "json", default=False, help="Print results in machine-readable JSON format."
 )
-flags.DEFINE_string(
-    "outdir",
-    default = None,
-    help = "Directory to store generated files."
-)
+flags.DEFINE_string("outdir", default=None, help="Directory to store generated files.")
 flags.DEFINE_bool(
     "production_names",
-    default = True,
-    help = "Rename glyphs to AGL-compliant names (uniXXXX, etc.) suitable for production. Disable to see the original glyph names.",
+    default=True,
+    help="Rename glyphs to AGL-compliant names (uniXXXX, etc.) suitable for production. Disable to see the original glyph names.",
 )
 
 # fontmake - and so gftools' - static builds perform overlaps removal, but fontc
@@ -210,8 +206,8 @@ flags.DEFINE_bool(
 # https://github.com/googlefonts/fontc/issues/975
 flags.DEFINE_bool(
     "keep_overlaps",
-    default = True,
-    help = "Keep overlaps when building static fonts. Disable to compare with simplified outlines.",
+    default=True,
+    help="Keep overlaps when building static fonts. Disable to compare with simplified outlines.",
 )
 flags.DEFINE_bool(
     "keep_direction", False, "Preserve contour winding direction from source."
@@ -242,9 +238,9 @@ def rel_user(fragment: Any) -> str:
     return fragment
 
 
-#===============================================================================
+# ===============================================================================
 # Running commands
-#===============================================================================
+# ===============================================================================
 
 
 # execute a command after logging it to stderr.
@@ -325,9 +321,9 @@ def try_normalizer(normalizer_bin: Path, font_file: Path, out_path: Path, table:
         return f.read()
 
 
-#===============================================================================
+# ===============================================================================
 # Building fonts with `fontc` and `fontmake`
-#===============================================================================
+# ===============================================================================
 
 
 class BuildFail(Exception):
@@ -346,7 +342,9 @@ def build(cmd: Sequence, build_dir: Optional[Path], **kwargs):
 
 
 # Standalone `fontc` (not managed by `gftools`)
-def build_fontc(source: Path, fontc_bin_path: Path, build_dir: Path, font_file_name: str):
+def build_fontc(
+    source: Path, fontc_bin_path: Path, build_dir: Path, font_file_name: str
+):
     out_file = build_dir / font_file_name
     if out_file.exists():
         eprint(f"reusing {rel_user(out_file)}")
@@ -463,7 +461,11 @@ def modified_gftools_config(
 
 
 def run_gftools(
-    source: Path, config_path: Path, build_dir: Path, font_file_name: str, fontc_bin_path: Optional[Path] = None
+    source: Path,
+    config_path: Path,
+    build_dir: Path,
+    font_file_name: str,
+    fontc_bin_path: Optional[Path] = None,
 ):
     out_file = build_dir / font_file_name
     if out_file.exists():
@@ -543,9 +545,9 @@ def copy(old, new):
     return new
 
 
-#===============================================================================
+# ===============================================================================
 # Building fonts with Glyphs.app
-#===============================================================================
+# ===============================================================================
 
 
 # Initial number of tries to establish a JSTalk connection to an already running
@@ -581,7 +583,9 @@ def application_with_version(major_version: int) -> (NSDistantObject, str, str):
         version = proxy.versionString()
         build_number = proxy.buildNumber()
         if version is None or build_number is None:
-            print(f"Cannot determine version or build number for application with bundle identifier {bundle_identifier}")
+            print(
+                f"Cannot determine version or build number for application with bundle identifier {bundle_identifier}"
+            )
             return None, None, None
 
         print(f"Found running instance of Glyphs {version} (build {build_number})")
@@ -589,7 +593,7 @@ def application_with_version(major_version: int) -> (NSDistantObject, str, str):
 
     # There is no running app, or another error occurred.
     # Try to launch the app via the bundle identifier.
-    # `-F` opens the application “fresh” (without restoring windows). This is important 
+    # `-F` opens the application “fresh” (without restoring windows). This is important
     #  when relaunching the app after a crash.
     # `-g` opens the application in the background.
     # `-j` opens the application hidden (its windows are not visible).
@@ -605,7 +609,9 @@ def application_with_version(major_version: int) -> (NSDistantObject, str, str):
     version = proxy.versionString()
     build_number = proxy.buildNumber()
     if version is None or build_number is None:
-        print(f"Cannot determine version or build number for application with bundle identifier {bundle_identifier}")
+        print(
+            f"Cannot determine version or build number for application with bundle identifier {bundle_identifier}"
+        )
         return None, None, None
 
     print(f"Launched instance of Glyphs {version} (build {build_number})")
@@ -617,16 +623,20 @@ def application_with_version(major_version: int) -> (NSDistantObject, str, str):
 def application_at_path(bundle_path: str) -> (NSDistantObject, str, str):
     version, build_number = app_bundle_version(bundle_path)
     if version is None or build_number is None:
-        print(f"Cannot determine version or build number for application bundle at {bundle_path}")
+        print(
+            f"Cannot determine version or build number for application bundle at {bundle_path}"
+        )
         return None, None, None
 
-    major_version = version.split('.', 1)[0]
+    major_version = version.split(".", 1)[0]
 
     # The registered name of a Glyphs app instance can include the build number.
     # We add a UUID to support multiple instances of the same build running simultaneously.
     # The UUID is passed to the app when launching it with the `open` command below.
     proxy_uuid = uuid.uuid4()
-    registered_name = f"{BASE_BUNDLE_IDENTIFIER}{major_version}.{build_number}.{proxy_uuid}"
+    registered_name = (
+        f"{BASE_BUNDLE_IDENTIFIER}{major_version}.{build_number}.{proxy_uuid}"
+    )
 
     # First, try to establish a connection to a running app matching the
     # registered name. We need only a low number of maximum tries because we
@@ -638,13 +648,15 @@ def application_at_path(bundle_path: str) -> (NSDistantObject, str, str):
 
     # There is no running app, or another error occurred. Try to launch the app
     # via the provided bundle path.
-    # `-F` opens the application “fresh” (without restoring windows). This is important 
+    # `-F` opens the application “fresh” (without restoring windows). This is important
     #  when relaunching the app after a crash.
     # `-g` opens the application in the background.
     # `-j` opens the application hidden (its windows are not visible).
     # `-n` opens a new instance of the application, enabling multiple simultaneous exports.
     print_if_not_json(f"Opening application at {bundle_path}")
-    os.system(f"open -a '{bundle_path}' -F -g -j -n --args -GSProxyPortNameUUID {proxy_uuid}")
+    os.system(
+        f"open -a '{bundle_path}' -F -g -j -n --args -GSProxyPortNameUUID {proxy_uuid}"
+    )
 
     # Try to establish a connection to the running app.
     proxy = application_proxy(registered_name, MAX_CONNECTION_TRIES)
@@ -662,7 +674,7 @@ def app_bundle_version(bundle_path) -> (Optional[str], Optional[str]):
     if not os.path.exists(info_plist_path):
         raise FileNotFoundError(f"Info.plist not found at: {info_plist_path}")
 
-    with open(info_plist_path, 'rb') as f:
+    with open(info_plist_path, "rb") as f:
         plist = plistlib.load(f)
 
     # CFBundleShortVersionString is the user-facing version
@@ -690,15 +702,17 @@ def application_proxy(registered_name: str, max_tries: int) -> NSDistantObject:
     tries = 1
 
     print_if_not_json(f"Looking for a JSTalk connection to {registered_name}")
-    while ((conn is None) and (tries < max_tries)):
+    while (conn is None) and (tries < max_tries):
         conn = NSConnection.connectionWithRegisteredName_host_(registered_name, None)
         tries = tries + 1
 
-        if (not conn):
-            print_if_not_json(f"Could not find connection, trying again ({tries} of {max_tries})")
+        if not conn:
+            print_if_not_json(
+                f"Could not find connection, trying again ({tries} of {max_tries})"
+            )
             time.sleep(1)
 
-    if (not conn):
+    if not conn:
         print_if_not_json(f"Failed to find a JSTalk connection to {registered_name}")
         return None
 
@@ -708,11 +722,11 @@ def application_proxy(registered_name: str, max_tries: int) -> NSDistantObject:
 # This function has been adapted from `Glyphs remote scripts/testExternal.py`
 # in the `https://github.com/schriftgestalt/GlyphsSDK` repository.
 def exportFirstInstance(
-    proxy: NSDistantObject, 
-    source: Path, 
-    build_dir: Path, 
+    proxy: NSDistantObject,
+    source: Path,
+    build_dir: Path,
     out_file_name: str,
-    should_terminate: bool
+    should_terminate: bool,
 ):
     out_file = build_dir / out_file_name
     if out_file.exists():
@@ -729,15 +743,15 @@ def exportFirstInstance(
     instance = font.instances()[0]
 
     arguments = {
-        'ExportFormat': "OTF",
-        'Destination': NSURL.fileURLWithPath_(build_dir_path)
+        "ExportFormat": "OTF",
+        "Destination": NSURL.fileURLWithPath_(build_dir_path),
     }
     if not FLAGS.production_names:
         # Glyphs defaults to True.
-        arguments['useProductionNames'] = False
+        arguments["useProductionNames"] = False
     if FLAGS.keep_overlaps:
         # Glyphs defaults to True for non-variable fonts.
-        arguments['removeOverlap'] = False
+        arguments["removeOverlap"] = False
 
     try:
         result = instance.generate_(arguments)
@@ -754,7 +768,7 @@ def exportFirstInstance(
         raise BuildFail(cmd, str(e))
 
     doc.close()
-    
+
     if result[0] != "Success":
         # Even though we do not have an actual command for Glyphs exports,
         # we construct one which can be passed to `BuildFail`.
@@ -774,7 +788,7 @@ def exportFirstInstance(
             terminate_macos_app(proxy)
 
         raise BuildFail(cmd, errors_string)
-    
+
     # Rename file to our standard name.
     temp_file = Path(result[1]).resolve()
     temp_file_name = temp_file.name
@@ -786,22 +800,22 @@ def exportFirstInstance(
         terminate_macos_app(proxy)
 
 
-def terminate_macos_app(
-    proxy: NSDistantObject
-):
+def terminate_macos_app(proxy: NSDistantObject):
     try:
         proxy.terminate_(None)
     except Exception as e:
-        if 'NSInvalidReceivePortException' in str(e):
-            print_if_not_json("Application is terminating. Ignoring expected exception.")
+        if "NSInvalidReceivePortException" in str(e):
+            print_if_not_json(
+                "Application is terminating. Ignoring expected exception."
+            )
         else:
             cmd = []
             raise BuildFail(cmd, str(e))
 
 
-#===============================================================================
+# ===============================================================================
 # Normalizing tables
-#===============================================================================
+# ===============================================================================
 
 
 def get_name_to_id_map(ttx: etree.ElementTree):
@@ -886,10 +900,8 @@ def drop_weird_names(ttx):
     )
     if d:
         drops.extend(d)
-    
-    d = ttx.xpath(
-        "//name/namerecord[@nameID='5']"
-    )
+
+    d = ttx.xpath("//name/namerecord[@nameID='5']")
     if d:
         drops.extend(d)
     for drop in drops:
@@ -975,12 +987,8 @@ def normalize_glyf_contours(
     tool_2_point_orders: dict[str, list[int]] = {}
 
     # Get glyphs from both TTX trees
-    tool_1_glyphs = {
-        g.attrib["name"]: g for g in tool_1_ttx.xpath("//glyf/TTGlyph")
-    }
-    tool_2_glyphs = {
-        g.attrib["name"]: g for g in tool_2_ttx.xpath("//glyf/TTGlyph")
-    }
+    tool_1_glyphs = {g.attrib["name"]: g for g in tool_1_ttx.xpath("//glyf/TTGlyph")}
+    tool_2_glyphs = {g.attrib["name"]: g for g in tool_2_ttx.xpath("//glyf/TTGlyph")}
 
     # Only process glyphs that exist in both outputs
     for glyph_name in tool_1_glyphs.keys() & tool_2_glyphs.keys():
@@ -1004,12 +1012,8 @@ def normalize_glyf_contours(
 
         if tool_1_strings == tool_2_strings:
             # Contours are identical, just in different order - normalize both
-            _normalize_single_glyph(
-                tool_1_glyph, tool_1_contours, tool_1_point_orders
-            )
-            _normalize_single_glyph(
-                tool_2_glyph, tool_2_contours, tool_2_point_orders
-            )
+            _normalize_single_glyph(tool_1_glyph, tool_1_contours, tool_1_point_orders)
+            _normalize_single_glyph(tool_2_glyph, tool_2_contours, tool_2_point_orders)
         # If sets don't match, skip normalization - leave original order
 
     return tool_1_point_orders, tool_2_point_orders
@@ -1440,6 +1444,7 @@ def reduce_diff_noise_fontmake(fontmake: etree.ElementTree):
     reorder_contextual_class_based_rules(fontmake, "GSUB", fontmake_glyph_map)
     reorder_contextual_class_based_rules(fontmake, "GPOS", fontmake_glyph_map)
 
+
 def reduce_diff_noise(tool_1: etree.ElementTree, tool_2: etree.ElementTree):
     for ttx in (tool_1, tool_2):
         # different name ids with the same value is fine
@@ -1474,21 +1479,17 @@ def reduce_diff_noise(tool_1: etree.ElementTree, tool_2: etree.ElementTree):
     normalize_gvar_contours(tool_1, tool_1_point_orders)
     normalize_gvar_contours(tool_2, tool_2_point_orders)
 
-    allow_fontc_only_variations_postscript_prefix(
-        tool_1, tool_2
-    )
+    allow_fontc_only_variations_postscript_prefix(tool_1, tool_2)
 
-    allow_some_off_by_ones(
-        tool_1, tool_2, "glyf/TTGlyph", "name", "/contour/pt"
-    )
+    allow_some_off_by_ones(tool_1, tool_2, "glyf/TTGlyph", "name", "/contour/pt")
     allow_some_off_by_ones(
         tool_1, tool_2, "gvar/glyphVariations", "glyph", "/tuple/delta"
     )
 
 
-#===============================================================================
+# ===============================================================================
 # Generating output
-#===============================================================================
+# ===============================================================================
 
 
 # given a font file, return a dictionary of tags -> size in bytes
@@ -1540,7 +1541,7 @@ def generate_output(
     font_file_1: Path,
     tool_2_type: ToolType,
     tool_2_name: str,
-    font_file_2: Path
+    font_file_2: Path,
 ):
     ttx_1 = run_ttx(font_file_1)
     ttx_2 = run_ttx(font_file_2)
@@ -1565,7 +1566,7 @@ def generate_output(
 
     map_1 = extract_comparables(tree_1, build_dir, tool_1_name)
     map_2 = extract_comparables(tree_2, build_dir, tool_2_name)
-    
+
     if tool_1_type == ToolType.GLYPHSAPP and tool_2_type == ToolType.GLYPHSAPP:
         # Remove BASE table when comparing two Glyphs app versions. We know that
         # it is written only by Glyphs 4+, so we can ignore it in the comparison.
@@ -1580,7 +1581,7 @@ def generate_output(
         map_1[LIG_CARET_NAME] = gdef_1
     if len(gdef_2):
         map_2[LIG_CARET_NAME] = gdef_2
-    
+
     # Use generic tool names as JSON keys.
     result = {TOOL_1_NAME: map_1, TOOL_2_NAME: map_2}
     if len(size_diffs) > 0:
@@ -1593,7 +1594,7 @@ def print_output(
     build_dir: Path,
     output: dict[str, dict[str, Any]],
     tool_1_name: str,
-    tool_2_name: str
+    tool_2_name: str,
 ):
     map_1 = output[TOOL_1_NAME]
     map_2 = output[TOOL_2_NAME]
@@ -1725,9 +1726,7 @@ def resolve_source(source: str, cache_dir: Path) -> Path:
         org_name = source_url.path.split("/")[-2]
         repo_name = source_url.path.split("/")[-1]
         sha = source_url.query
-        local_repo = (
-            cache_dir / org_name / repo_name
-        ).resolve()
+        local_repo = (cache_dir / org_name / repo_name).resolve()
         if not local_repo.parent.is_dir():
             local_repo.parent.mkdir(parents=True)
         if not local_repo.is_dir():
@@ -1748,11 +1747,11 @@ def resolve_source(source: str, cache_dir: Path) -> Path:
 
 
 def delete_things_we_must_rebuild(
-    rebuild: str, 
-    tool_1_name: str, 
-    font_file_1: Path, 
-    tool_2_name: str, 
-    font_file_2: Path
+    rebuild: str,
+    tool_1_name: str,
+    font_file_1: Path,
+    tool_2_name: str,
+    font_file_2: Path,
 ):
     # Replace generic rebuild flag with specific tool name.
     if rebuild == TOOL_1_NAME:
@@ -1760,7 +1759,10 @@ def delete_things_we_must_rebuild(
     elif rebuild == TOOL_2_NAME:
         rebuild = tool_2_name
 
-    for tool_name, font_file in [(tool_1_name, font_file_1), (tool_2_name, font_file_2)]:
+    for tool_name, font_file in [
+        (tool_1_name, font_file_1),
+        (tool_2_name, font_file_2),
+    ]:
         must_rebuild = rebuild in [tool_name, "both"]
         if must_rebuild:
             for path in [
@@ -1824,9 +1826,9 @@ def get_crate_path(
     )
 
 
-#===============================================================================
+# ===============================================================================
 # Tool definitions
-#===============================================================================
+# ===============================================================================
 
 
 @dataclass
@@ -1851,7 +1853,9 @@ class Tool(ABC):
 
     # Subclasses should return their specific build action as a closure.
     @abstractmethod
-    def build_action(self, build_dir: Path, font_file_name: str = None) -> Callable[[], None]:
+    def build_action(
+        self, build_dir: Path, font_file_name: str = None
+    ) -> Callable[[], None]:
         pass
 
     # Central method for building and exception handling (internal).
@@ -1863,14 +1867,14 @@ class Tool(ABC):
                 "command": " ".join(e.command),
                 "stderr": e.msg[-MAX_ERR_LEN:],
             }
-        
+
         return None
-    
+
     # Call this method to generate the specific build action and start a build.
     def run(self, build_dir: Path, font_file_name: str = None) -> Optional[dict]:
         action = self.build_action(build_dir, font_file_name)
         return self._build(action)
-        
+
 
 @dataclass
 class FontcTool(Tool):
@@ -1880,8 +1884,12 @@ class FontcTool(Tool):
     _fontc_bin_path: Path = field(init=False, repr=False)
 
     def __post_init__(self):
-        self._fontc_bin_path = get_crate_path(self.fontc_bin_str, self.fontc_repo_root, FONTC_NAME)
-        assert self._fontc_bin_path.is_file(), f"fontc path '{self._fontc_bin_path}' does not exist"
+        self._fontc_bin_path = get_crate_path(
+            self.fontc_bin_str, self.fontc_repo_root, FONTC_NAME
+        )
+        assert self._fontc_bin_path.is_file(), (
+            f"fontc path '{self._fontc_bin_path}' does not exist"
+        )
 
     # Created once, read-only.
     @property
@@ -1891,53 +1899,67 @@ class FontcTool(Tool):
 
 @dataclass(unsafe_hash=True)
 class StandaloneFontcTool(FontcTool):
-
     @property
     def type(self) -> ToolType:
         return ToolType.FONTC
 
-    def build_action(self, build_dir: Path, font_file_name: str = None) -> Callable[[], None]:
+    def build_action(
+        self, build_dir: Path, font_file_name: str = None
+    ) -> Callable[[], None]:
         def action():
             build_fontc(self.source, self.fontc_bin_path, build_dir, font_file_name)
+
         return action
 
 
 @dataclass(unsafe_hash=True)
 class GfToolsFontcTool(FontcTool):
-
     @property
     def type(self) -> ToolType:
         return ToolType.FONTC_GFTOOLS
 
-    def build_action(self, build_dir: Path, font_file_name: str = None) -> Callable[[], None]:
+    def build_action(
+        self, build_dir: Path, font_file_name: str = None
+    ) -> Callable[[], None]:
         def action():
-            run_gftools(self.source, FLAGS.config, build_dir, font_file_name, self.fontc_bin_path)
+            run_gftools(
+                self.source,
+                FLAGS.config,
+                build_dir,
+                font_file_name,
+                self.fontc_bin_path,
+            )
+
         return action
 
 
 @dataclass(unsafe_hash=True)
 class StandaloneFontmakeTool(Tool):
-
     @property
     def type(self) -> ToolType:
         return ToolType.FONTMAKE
 
-    def build_action(self, build_dir: Path, font_file_name: str = None) -> Callable[[], None]:
+    def build_action(
+        self, build_dir: Path, font_file_name: str = None
+    ) -> Callable[[], None]:
         def action():
             build_fontmake(self.source, build_dir, font_file_name)
+
         return action
 
 
 @dataclass(unsafe_hash=True)
 class GfToolsFontmakeTool(Tool):
-
     @property
     def type(self) -> ToolType:
         return ToolType.FONTMAKE_GFTOOLS
 
-    def build_action(self, build_dir: Path, font_file_name: str = None) -> Callable[[], None]:
+    def build_action(
+        self, build_dir: Path, font_file_name: str = None
+    ) -> Callable[[], None]:
         def action():
             run_gftools(self.source, FLAGS.config, build_dir, font_file_name)
+
         return action
 
 
@@ -1949,21 +1971,25 @@ class GlyphsAppTool(Tool):
 
     # Created once, internal.
     _glyphsapp_proxy: NSDistantObject = field(init=False, repr=False)
-    
+
     _version: str = None
     _build_number: str = None
 
     def __post_init__(self):
         if self.bundle_path is not None and self.major_version is None:
-            self._glyphsapp_proxy, self._version, self._build_number = application_at_path(self.bundle_path)
+            self._glyphsapp_proxy, self._version, self._build_number = (
+                application_at_path(self.bundle_path)
+            )
             if self._glyphsapp_proxy is None:
                 sys.exit(f"No JSTalk connection to Glyphs app at {self.bundle_path}")
 
         elif self.bundle_path is None and self.major_version is not None:
-            self._glyphsapp_proxy, self._version, self._build_number = application_with_version(self.major_version)
+            self._glyphsapp_proxy, self._version, self._build_number = (
+                application_with_version(self.major_version)
+            )
             if self._glyphsapp_proxy is None:
                 sys.exit(f"No JSTalk connection to Glyphs {self.major_version} app")
-        
+
         else:
             sys.exit("Must specify either bundle path or major version for Glyphs app")
 
@@ -1980,22 +2006,34 @@ class GlyphsAppTool(Tool):
     def font_file_extension(self) -> str:
         return "otf"
 
-    def build_action(self, build_dir: Path, font_file_name: str = None) -> Callable[[], None]:
+    def build_action(
+        self, build_dir: Path, font_file_name: str = None
+    ) -> Callable[[], None]:
         should_terminate = self.bundle_path is not None and self.major_version is None
+
         def action():
-            exportFirstInstance(self._glyphsapp_proxy, self.source, build_dir, font_file_name, should_terminate)
+            exportFirstInstance(
+                self._glyphsapp_proxy,
+                self.source,
+                build_dir,
+                font_file_name,
+                should_terminate,
+            )
             self._glyphsapp_proxy = None
+
         return action
 
 
-#===============================================================================
+# ===============================================================================
 # Main method
-#===============================================================================
+# ===============================================================================
 
 
 def main(argv):
     if len(argv) != 2:
-        sys.exit("Only one argument, a source file, is expected. Pass the `--help` flag to display usage information and available options.")
+        sys.exit(
+            "Only one argument, a source file, is expected. Pass the `--help` flag to display usage information and available options."
+        )
 
     cache_dir = Path(FLAGS.cache_path).expanduser().resolve()
     source = resolve_source(argv[1], cache_dir).resolve()
@@ -2071,7 +2109,7 @@ def main(argv):
             if version_1 == version_2 and build_number_1 == build_number_2:
                 sys.exit("Must specify two different Glyphs app builds")
 
-    tool_1 = None;
+    tool_1 = None
     if tool_1_type == ToolType.FONTC:
         tool_1 = StandaloneFontcTool(source, fontc_repo_root, FLAGS.tool_1_path)
     elif tool_1_type == ToolType.FONTMAKE:
@@ -2083,7 +2121,7 @@ def main(argv):
     elif tool_1_type == ToolType.GLYPHSAPP:
         tool_1 = GlyphsAppTool(source, FLAGS.tool_1_path, tool_1_glyphs_version)
 
-    tool_2 = None;
+    tool_2 = None
     if tool_2_type == ToolType.FONTC:
         tool_2 = StandaloneFontcTool(source, fontc_repo_root, FLAGS.tool_2_path)
     elif tool_2_type == ToolType.FONTMAKE:
@@ -2114,18 +2152,14 @@ def main(argv):
     # We delete all resources that we have to rebuild. The rest of the script
     # will assume it can reuse anything that still exists.
     delete_things_we_must_rebuild(
-        FLAGS.rebuild,
-        tool_1_name,
-        font_file_1,
-        tool_2_name,
-        font_file_2
+        FLAGS.rebuild, tool_1_name, font_file_1, tool_2_name, font_file_2
     )
 
     failures = {}
 
     failure_1 = tool_1.run(build_dir, font_file_name_1)
     failure_2 = tool_2.run(build_dir, font_file_name_2)
-    
+
     if failure_1 is not None:
         failures[TOOL_1_NAME] = failure_1
     if failure_2 is not None:
@@ -2145,7 +2179,7 @@ def main(argv):
         font_file_1,
         tool_2_type,
         tool_2_name,
-        font_file_2
+        font_file_2,
     )
 
     diffs = False
