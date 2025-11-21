@@ -23,7 +23,9 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
-        python-version: ['3.10', '3.13']
+        # Note: Changes for Glyphs app use `StrEnum` in `enum`, which is
+        # available only from Python 3.11.
+        python-version: ['3.11', '3.13']
         # TODO: Re-enable 3.14 once gftools updates pygit2 pin from 1.16.0
         # https://github.com/googlefonts/gftools/blob/d4c06f5d88e0a849fabf7089d80835a96dc42f30/pyproject.toml#L47-L49
 
