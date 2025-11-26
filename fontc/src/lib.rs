@@ -412,6 +412,14 @@ mod tests {
                 .map(|v| v.to_u16() as u32)
         }
 
+        fn get_glyph_name(&self, gid: GlyphId16) -> Option<GlyphName> {
+            self.fe_context
+                .glyph_order
+                .get()
+                .glyph_name(gid.to_u32() as usize)
+                .cloned()
+        }
+
         fn contains_glyph(&self, name: &str) -> bool {
             self.get_glyph_index(name).is_some()
         }
@@ -3687,6 +3695,50 @@ mod tests {
     }
 
     #[test]
+    fn cpal_prefer_master() {
+        let result = TestCompile::compile_source("glyphs3/COLRv0-palette-redefinition.glyphs");
+        let cpal = result.font().cpal().unwrap();
+        assert_eq!(
+            (
+                2,
+                2,
+                [
+                    ColorRecord {
+                        red: 20,
+                        green: 21,
+                        blue: 22,
+                        alpha: 23
+                    },
+                    ColorRecord {
+                        red: 24,
+                        green: 25,
+                        blue: 26,
+                        alpha: 27
+                    },
+                    ColorRecord {
+                        red: 28,
+                        green: 29,
+                        blue: 30,
+                        alpha: 31
+                    },
+                    ColorRecord {
+                        red: 32,
+                        green: 33,
+                        blue: 34,
+                        alpha: 35
+                    },
+                ]
+                .as_slice()
+            ),
+            (
+                cpal.num_palettes(),
+                cpal.num_palette_entries(),
+                cpal.color_records_array().unwrap().unwrap()
+            )
+        );
+    }
+
+    #[test]
     fn cpal_grayscale() {
         let result = TestCompile::compile_source("glyphs3/COLRv1-grayscale.glyphs");
         let cpal = result.font().cpal().unwrap();
@@ -3751,6 +3803,50 @@ mod tests {
     }
 
     #[test]
+    fn cpal_from_declared_palettes() {
+        let result = TestCompile::compile_source("glyphs3/COLRv0-1layer.glyphs");
+        let cpal = result.font().cpal().unwrap();
+        assert_eq!(
+            (
+                2,
+                2,
+                [
+                    ColorRecord {
+                        red: 1,
+                        green: 2,
+                        blue: 3,
+                        alpha: 4
+                    },
+                    ColorRecord {
+                        red: 5,
+                        green: 6,
+                        blue: 7,
+                        alpha: 8
+                    },
+                    ColorRecord {
+                        red: 9,
+                        green: 10,
+                        blue: 11,
+                        alpha: 12
+                    },
+                    ColorRecord {
+                        red: 13,
+                        green: 14,
+                        blue: 15,
+                        alpha: 16
+                    },
+                ]
+                .as_slice()
+            ),
+            (
+                cpal.num_palettes(),
+                cpal.num_palette_entries(),
+                cpal.color_records_array().unwrap().unwrap()
+            )
+        );
+    }
+
+    #[test]
     fn color_me_not() {
         let compile = TestCompile::compile_source("glyphs3/WghtVar.glyphs");
         assert!(compile.font().cpal().is_err());
@@ -3770,7 +3866,53 @@ mod tests {
         result.font().colr().unwrap(); // for now just check the table exists
     }
 
-    fn root_paint<'a>(compile: &TestCompile, colr: Colr<'a>, glyph_name: &str) -> Paint<'a> {
+    #[test]
+    fn colrv0_sorted_structures() {
+        let result = TestCompile::compile_source("glyphs3/COLRv0-reordered.glyphs");
+        let colr = result.font().colr().unwrap();
+
+        for pair in colr.base_glyph_records().unwrap().unwrap().windows(2) {
+            assert!(
+                pair[0].glyph_id().to_u32() < pair[1].glyph_id().to_u32(),
+                "Not sorted: {pair:#?}"
+            );
+        }
+    }
+
+    #[test]
+    fn colrv1_sorted_structures() {
+        let result = TestCompile::compile_source("glyphs3/COLRv1-reordered.glyphs");
+        let colr = result.font().colr().unwrap();
+
+        for pair in colr
+            .base_glyph_list()
+            .unwrap()
+            .unwrap()
+            .base_glyph_paint_records()
+            .windows(2)
+        {
+            assert!(
+                pair[0].glyph_id().to_u32() < pair[1].glyph_id().to_u32(),
+                "Not sorted: {pair:#?}"
+            );
+        }
+
+        let clips = colr.clip_list().unwrap().unwrap().clips();
+        for clip in clips {
+            assert!(
+                clip.start_glyph_id().to_u32() <= clip.end_glyph_id().to_u32(),
+                "Bad start/end: {clip:#?}"
+            );
+        }
+        for pair in clips.windows(2) {
+            assert!(
+                pair[0].end_glyph_id() < pair[1].start_glyph_id(),
+                "Not sorted: {pair:#?}"
+            );
+        }
+    }
+
+    fn root_paint<'a>(compile: &TestCompile, colr: &Colr<'a>, glyph_name: &str) -> Paint<'a> {
         let gid = compile.get_gid(glyph_name);
         let base_glyph_list = colr.base_glyph_list().unwrap().unwrap();
         let base_glyphs = base_glyph_list.base_glyph_paint_records();
@@ -3783,7 +3925,7 @@ mod tests {
 
     fn root_paint_glyph<'a>(
         compile: &TestCompile,
-        colr: Colr<'a>,
+        colr: &Colr<'a>,
         glyph_name: &str,
     ) -> PaintGlyph<'a> {
         let paint = root_paint(compile, colr, glyph_name);
@@ -3797,25 +3939,121 @@ mod tests {
     fn colr_gradient_linear() {
         let result = TestCompile::compile_source("glyphs3/COLRv1-grayscale.glyphs");
         let colr = result.font().colr().expect("COLR");
-        assert!(matches!(
-            root_paint_glyph(&result, colr, "A").paint(),
-            Ok(Paint::LinearGradient(_))
-        ));
+
+        // Glyph A has bbox (63, 0) to (542, 500) -> width=479, height=500
+        // Gradient p0=(0.1, 0.1), p1=(0.9, 0.9) in percentage coordinates
+        // Expected absolute coordinates:
+        //   p0: (63 + 479*0.1, 0 + 500*0.1) = (111, 50)
+        //   p1: (63 + 479*0.9, 0 + 500*0.9) = (494, 450)
+        //   p2: perpendicular rotation in absolute space = (511, -333)
+        let Paint::LinearGradient(grad) = root_paint_glyph(&result, &colr, "A")
+            .paint()
+            .expect("Valid paint")
+        else {
+            panic!("Expected LinearGradient");
+        };
+
+        let coords = (
+            (grad.x0().to_i16(), grad.y0().to_i16()),
+            (grad.x1().to_i16(), grad.y1().to_i16()),
+            (grad.x2().to_i16(), grad.y2().to_i16()),
+        );
+        assert_eq!(coords, ((111, 50), (494, 450), (511, -333)), "p0, p1, p2");
     }
 
     #[test]
     fn colr_gradient_radial() {
         let result = TestCompile::compile_source("glyphs3/COLRv1-gradient.glyphs");
         let colr = result.font().colr().expect("COLR");
-        assert!(matches!(
-            root_paint_glyph(&result, colr, "K").paint(),
-            Ok(Paint::RadialGradient(_))
-        ));
+
+        // Glyph K has bbox (63, 0) to (542, 500) -> width=479, height=500
+        // Radial gradient with center=(0.5, 0.5) in percentage coordinates
+        // Expected absolute coordinates:
+        //   p0 = p1: (63 + 479*0.5, 0 + 500*0.5) = (303, 250)
+        //   r0: 0 (default)
+        //   r1: max distance from center to corners = 346
+        //     Center in bbox-relative coords: (239.5, 250)
+        //     Distance to all corners (0,0), (479,0), (0,500), (479,500): ~346
+        let Paint::RadialGradient(grad) = root_paint_glyph(&result, &colr, "K")
+            .paint()
+            .expect("Valid paint")
+        else {
+            panic!("Expected RadialGradient");
+        };
+
+        let values = (
+            (grad.x0().to_i16(), grad.y0().to_i16()),
+            grad.radius0().to_u16(),
+            (grad.x1().to_i16(), grad.y1().to_i16()),
+            grad.radius1().to_u16(),
+        );
+        assert_eq!(values, ((303, 250), 0, (303, 250), 346), "p0, r0, p1, r1");
+    }
+
+    #[test]
+    fn colr_gradient_radial_outside_bbox() {
+        // Test radial gradient with center outside the bounding box
+        let result = TestCompile::compile_source("glyphs3/COLRv1-gradient.glyphs");
+        let colr = result.font().colr().expect("COLR");
+
+        // Glyph L has bbox (63, 0) to (542, 500) -> width=479, height=500
+        // Radial gradient with center at x=-0.2 (outside bbox to the left), y=0.5
+        // Expected absolute coordinates:
+        //   center_x = 63 + 479*(-0.2) = 63 - 95.8 ≈ -33
+        //   center_y = 0 + 500*0.5 = 250
+        //   p0 = p1: (-33, 250)
+        //   r0: 0 (default)
+        //   r1: max distance from (-96, 250) in bbox-relative coords to all corners
+        //     Distance to (479, 0): sqrt((479-(-96))^2 + (0-250)^2) = sqrt(575^2 + 250^2) ~= 627
+        let Paint::RadialGradient(grad) = root_paint_glyph(&result, &colr, "L")
+            .paint()
+            .expect("Valid paint")
+        else {
+            panic!("Expected RadialGradient");
+        };
+
+        let values = (
+            (grad.x0().to_i16(), grad.y0().to_i16()),
+            grad.radius0().to_u16(),
+            (grad.x1().to_i16(), grad.y1().to_i16()),
+            grad.radius1().to_u16(),
+        );
+        assert_eq!(values, ((-33, 250), 0, (-33, 250), 627), "p0, r0, p1, r1");
+    }
+
+    #[test]
+    fn colr_clipbox_quantization() {
+        use write_fonts::read::tables::colr::ClipBox;
+
+        let result = TestCompile::compile_source("glyphs3/COLRv1-gradient.glyphs");
+        let colr = result.font().colr().expect("COLR");
+        let clip_list = colr
+            .clip_list()
+            .expect("offset")
+            .expect("ClipList should exist");
+
+        for clip in clip_list.clips() {
+            let clip_box = clip.clip_box(clip_list.offset_data()).expect("ClipBox");
+            let (x_min, y_min, x_max, y_max) = match clip_box {
+                ClipBox::Format1(cb) => (cb.x_min(), cb.y_min(), cb.x_max(), cb.y_max()),
+                ClipBox::Format2(cb) => (cb.x_min(), cb.y_min(), cb.x_max(), cb.y_max()),
+            };
+
+            // All glyphs in this test file have bbox (63, 0, 542, 500)
+            // which quantizes to (0, 0, 600, 500) with factor 100 (1000 upem)
+            let coords = (
+                x_min.to_i16(),
+                y_min.to_i16(),
+                x_max.to_i16(),
+                y_max.to_i16(),
+            );
+            assert_eq!(coords, (0, 0, 600, 500), "quantized ClipBox coordinates");
+        }
     }
 
     #[test]
     fn colr_cliprun() {
-        let result = TestCompile::compile_source("glyphs3/COLRv1-solid.glyphs");
+        let result = TestCompile::compile_source("glyphs3/COLRv1-cliprun.glyphs");
         let colr = result.font().colr().unwrap();
         assert_eq!(
             vec![(1, 2)],
@@ -3846,9 +4084,8 @@ mod tests {
     }
 
     #[test]
-    fn colr_split_based_on_paint() {
-        // Only one paint, no need to split
-        let result = TestCompile::compile_source("glyphs3/COLRv1-manyshapes-per-glyph.glyphs");
+    fn colr_split_based_on_paint_type() {
+        let result = TestCompile::compile_source("glyphs3/COLRv1-gradientsolid.glyphs");
         assert_eq!(
             vec![".notdef", "A", "A.color0", "A.color1"],
             result
@@ -3858,6 +4095,174 @@ mod tests {
                 .names()
                 .map(|gn| gn.as_str())
                 .collect::<Vec<_>>()
+        );
+        let colr = result.font().colr().unwrap();
+        assert!(matches!(
+            root_paint(&result, &colr, "A"),
+            Paint::ColrLayers(_)
+        ));
+        let layer_list = colr
+            .layer_list()
+            .expect("A layer list")
+            .expect("A valid layer list");
+        let layers = layer_list
+            .paints()
+            .iter()
+            .map(|p| {
+                let Ok(Paint::Glyph(paint_glyph)) = p else {
+                    panic!("Bad paint {p:?}");
+                };
+                paint_glyph.paint().unwrap()
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            matches!(
+                layers.as_slice(),
+                [Paint::LinearGradient(_), Paint::Solid(_),]
+            ),
+            "{layers:#?}"
+        );
+    }
+
+    #[test]
+    fn colr_split_based_on_paint_same_paint() {
+        let result = TestCompile::compile_source("glyphs3/COLRv1-manyshapes-per-glyph.glyphs");
+        assert_eq!(
+            vec![
+                ".notdef", "A", "B", "A.color0", "A.color1", "B.color0", "B.color1"
+            ],
+            result
+                .fe_context
+                .glyph_order
+                .get()
+                .names()
+                .map(|gn| gn.as_str())
+                .collect::<Vec<_>>()
+        );
+        let colr = result.font().colr().unwrap();
+
+        let Paint::ColrLayers(a_layers) = root_paint(&result, &colr, "A") else {
+            panic!("Expected ColrLayers for glyph A");
+        };
+        let Paint::ColrLayers(b_layers) = root_paint(&result, &colr, "B") else {
+            panic!("Expected ColrLayers for glyph B");
+        };
+
+        // "A" should point to layers 0-1, "B" should point to layers 2-3
+        // We had a bug where both had first_layer_index=0 instead
+        // https://github.com/googlefonts/fontc/issues/1767
+        assert_eq!(
+            (a_layers.first_layer_index(), a_layers.num_layers()),
+            (0, 2),
+            "Glyph A: FirstLayerIndex, NumLayers"
+        );
+        assert_eq!(
+            (b_layers.first_layer_index(), b_layers.num_layers()),
+            (2, 2),
+            "Glyph B: FirstLayerIndex, NumLayers"
+        );
+
+        let layer_list = colr
+            .layer_list()
+            .expect("A layer list")
+            .expect("A valid layer list");
+        let layers = layer_list
+            .paints()
+            .iter()
+            .map(|p| {
+                let Ok(Paint::Glyph(paint_glyph)) = p else {
+                    panic!("Bad paint {p:?}");
+                };
+                paint_glyph.paint().unwrap()
+            })
+            .collect::<Vec<_>>();
+        let [
+            Paint::LinearGradient(g0),
+            Paint::LinearGradient(g1),
+            Paint::LinearGradient(g2),
+            Paint::LinearGradient(g3),
+        ] = layers.as_slice()
+        else {
+            panic!("Expected 4 LinearGradients, got {layers:#?}");
+        };
+
+        let coords = [g0, g1, g2, g3].map(|g| {
+            (
+                (g.x0().to_i16(), g.y0().to_i16()),
+                (g.x1().to_i16(), g.y1().to_i16()),
+                (g.x2().to_i16(), g.y2().to_i16()),
+            )
+        });
+
+        assert_eq!(
+            coords,
+            [
+                // A.color0: red->blue linear gradient, bbox(263,0,542,500), start(0.1,0.1), end(0.9,0.9)
+                ((291, 50), (514, 450), (691, -173)),
+                // A.color1: green->cyan linear gradient, bbox(63,0,342,300), start(0.1,0.1), end(0.9,0.9)
+                ((91, 30), (314, 270), (331, -193)),
+                // B.color0: green->cyan with DIFFERENT geometry, bbox(467,0,746,500)
+                // start(0.7111,0.1428), end(0.2515,0.8412). This verifies that we do split despite
+                // same gradient type & colors: https://github.com/googlefonts/fontc/issues/1766
+                ((665, 71), (537, 421), (1015, 200)),
+                // B.color1: green->cyan (same as A.color1)
+                ((91, 30), (314, 270), (331, -193)),
+            ],
+            "p0, p1, p2 for gradients A.color0, A.color1, B.color0, B.color1"
+        );
+    }
+
+    fn assert_colr0(compile: &TestCompile, expected: Vec<(String, Vec<(String, u16)>)>) {
+        let colr = compile.font().colr().unwrap();
+        let layers = colr
+            .layer_records()
+            .expect("A layer list")
+            .expect("A valid layer list");
+        assert_eq!(0, colr.version());
+        assert_eq!(
+            expected,
+            colr.base_glyph_records()
+                .expect("v0 records")
+                .expect("Valid v0 records")
+                .iter()
+                .map(|g| (
+                    compile
+                        .get_glyph_name(g.glyph_id())
+                        .expect("Valid gids")
+                        .to_string(),
+                    (g.first_layer_index()..(g.first_layer_index() + g.num_layers()))
+                        .map(|i| layers[i as usize])
+                        .map(|l| (
+                            compile
+                                .get_glyph_name(l.glyph_id())
+                                .expect("Valid gids")
+                                .to_string(),
+                            l.palette_index()
+                        ))
+                        .collect::<Vec<_>>()
+                ))
+                .collect::<Vec<_>>()
+        )
+    }
+
+    #[test]
+    fn colr0_1layer() {
+        let result = TestCompile::compile_source("glyphs3/COLRv0-1layer.glyphs");
+        assert_colr0(
+            &result,
+            vec![("A".to_string(), vec![("A.color0".to_string(), 1)])],
+        );
+    }
+
+    #[test]
+    fn colr0_2layers() {
+        let result = TestCompile::compile_source("glyphs3/COLRv0-2layers.glyphs");
+        assert_colr0(
+            &result,
+            vec![(
+                "A".to_string(),
+                vec![("A.color0".to_string(), 1), ("A.color1".to_string(), 0)],
+            )],
         );
     }
 

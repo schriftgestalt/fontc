@@ -17,7 +17,7 @@ use fontir::{
     error::{BadGlyph, BadGlyphKind, BadSource, Error},
     feature_variations::{NBox, overlay_feature_variations},
     ir::{
-        self, AnchorBuilder, Color, ColorGlyphs, ColorPalettes, Condition, ConditionSet,
+        self, AnchorBuilder, ColorGlyphs, ColorPalettes, Condition, ConditionSet,
         DEFAULT_VENDOR_ID, GdefCategories, GlobalMetric, GlobalMetrics, GlobalMetricsBuilder,
         GlyphInstance, GlyphOrder, KernGroup, KernSide, KerningGroups, KerningInstance,
         MetaTableValues, NameBuilder, NameKey, NamedInstance, Paint, PaintGlyph, PostscriptNames,
@@ -43,7 +43,8 @@ use write_fonts::{
 };
 
 use crate::toir::{
-    FontInfo, design_location, to_ir_contours_and_components, to_ir_features, to_ir_paint,
+    FontInfo, design_location, to_ir_color, to_ir_contours_and_components, to_ir_features,
+    to_ir_paint,
 };
 
 #[derive(Debug, Clone)]
@@ -581,6 +582,7 @@ fn make_feature_variations(fontinfo: &FontInfo) -> Option<VariableFeature> {
         return None;
     }
 
+    //https://github.com/googlefonts/glyphsLib/blob/bb17c74be/Lib/glyphsLib/builder/bracket_layers.py#L52
     let overlayed = overlay_feature_variations(rules);
 
     let raw_feature = fontinfo
@@ -685,12 +687,18 @@ fn get_bracket_info(layer: &Layer, axes: &Axes) -> ConditionSet {
     );
 
     axes.iter()
+        .filter(|ax| !ax.is_point())
         .zip(&layer.attributes.axis_rules)
-        .filter_map(|(axis, rule)| {
-            let min = rule.min.map(|v| DesignCoord::new(v as f64));
-            let max = rule.max.map(|v| DesignCoord::new(v as f64));
-            // skip axes that aren't relevant
-            (min.is_some() || max.is_some()).then(|| Condition::new(axis.tag, min, max))
+        .map(|(axis, rule)| {
+            let min = rule
+                .min
+                .map(|v| DesignCoord::new(v as f64))
+                .unwrap_or(axis.min.to_design(&axis.converter));
+            let max = rule
+                .max
+                .map(|v| DesignCoord::new(v as f64))
+                .unwrap_or(axis.max.to_design(&axis.converter));
+            Condition::new(axis.tag, min.into(), max.into())
         })
         .collect()
 }
@@ -1596,8 +1604,28 @@ impl Work<Context, WorkId, Error> for ColorPaletteWork {
     }
 
     fn exec(&self, context: &Context) -> Result<(), Error> {
-        // Since we're only [for now, baby steps] producing one palette we can dedup it
-        let palette = self
+        // Directly declared palette(s), preferring master to global
+        let mut palettes = if let Some(declared_palettes) = self.font_info.font.color_palettes() {
+            declared_palettes
+                .iter()
+                .map(|raw_palette| {
+                    raw_palette
+                        .iter()
+                        .map(|c| to_ir_color(*c))
+                        .collect::<Vec<_>>()
+                })
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
+
+        if palettes.is_empty() {
+            palettes.push(Vec::new());
+        }
+
+        // Plus any colors declared directly on COLRv1 glyphs
+        // Glue them onto all palettes to keep size even, duplication will be resolved later
+        let glyph_colors = self
             .font_info
             .font
             .glyphs
@@ -1609,15 +1637,17 @@ impl Work<Context, WorkId, Error> for ColorPaletteWork {
                     .flat_map(|l| l.shapes.iter())
                     .flat_map(|s| s.attributes().colors())
             })
-            .map(|c| Color {
-                r: c.r as u8,
-                g: c.g as u8,
-                b: c.b as u8,
-                a: c.a as u8,
-            })
+            .map(|c| to_ir_color(*c))
             .collect::<Vec<_>>();
-        debug!("{} color palette entries", palette.len());
-        match ColorPalettes::new(vec![palette]) {
+        for palette in palettes.iter_mut() {
+            palette.extend(&glyph_colors);
+        }
+
+        debug!(
+            "{:?} color palette sizes",
+            palettes.iter().map(|p| p.len()).collect::<Vec<_>>()
+        );
+        match ColorPalettes::new(palettes) {
             Ok(Some(palettes)) => {
                 context.colors.set(palettes);
                 Ok(())
@@ -1631,6 +1661,53 @@ impl Work<Context, WorkId, Error> for ColorPaletteWork {
 #[derive(Debug)]
 struct ColorGlyphsWork {
     font_info: Arc<FontInfo>,
+}
+
+impl ColorGlyphsWork {
+    fn get_glyph(&self, glyph_name: &SmolStr) -> &glyphs_reader::Glyph {
+        self.font_info
+            .font
+            .glyphs
+            .get(glyph_name)
+            .unwrap_or_else(|| panic!("No glyph for name {glyph_name}"))
+    }
+}
+
+/// Creates a [PaintGlyph] for a split glyph, that is one that is known to have 1..N shapes with the same paint
+fn create_paint_glyph(
+    palette: Option<&[glyphs_reader::Color]>,
+    default_master_id: &str,
+    color_glyph: &glyphs_reader::Glyph,
+) -> Result<PaintGlyph, Error> {
+    // TODO: create a location=>paint structure, similar to Glyph=>GlyphInstance to support variation
+    let Some(default_layer) = color_glyph
+        .layers
+        .iter()
+        .find(|l| l.layer_id == default_master_id)
+    else {
+        return Err(Error::BadGlyph(BadGlyph::new(
+            color_glyph.name.clone(),
+            BadGlyphKind::MissingMaster(default_master_id.to_string()),
+        )));
+    };
+    let Some(first_shape) = default_layer.shapes.first() else {
+        return Err(Error::BadGlyph(BadGlyph::new(
+            color_glyph.name.clone(),
+            BadGlyphKind::FrontendSpecific(format!(
+                "Color glyph has no shapes in default layer (layer_id: {})",
+                default_layer.layer_id
+            )),
+        )));
+    };
+    Ok(PaintGlyph {
+        name: color_glyph.name.clone().into(),
+        paint: to_ir_paint(
+            palette,
+            color_glyph.name.clone(),
+            default_layer,
+            first_shape.attributes(),
+        )?,
+    })
 }
 
 impl Work<Context, WorkId, Error> for ColorGlyphsWork {
@@ -1649,58 +1726,33 @@ impl Work<Context, WorkId, Error> for ColorGlyphsWork {
     fn exec(&self, context: &Context) -> Result<(), Error> {
         let default_master_id = self.font_info.font.default_master().id.as_str();
 
-        let color_glyphs = self
-            .font_info
-            .font
-            .glyphs
-            .values()
-            .filter(|g| {
-                g.layers.iter().filter(|l| l.attributes.color).any(|l| {
-                    l.shapes
-                        .iter()
-                        .any(|s| s.attributes().colors().next().is_some())
-                })
-            })
-            .collect::<Vec<_>>();
-        if color_glyphs.is_empty() {
+        if self.font_info.color_glyphs.is_empty() {
             return Ok(());
         }
         let mut graph = ColorGlyphs {
-            base_glyphs: IndexMap::with_capacity(color_glyphs.len()),
+            base_glyphs: IndexMap::with_capacity(self.font_info.color_glyphs.len()),
         };
-        for color_glyph in color_glyphs {
-            let glyph_name: GlyphName = color_glyph.name.clone().into();
-            let Some(default_layer) = color_glyph
-                .layers
-                .iter()
-                .find(|l| l.layer_id == default_master_id)
-            else {
-                return Err(Error::BadGlyph(BadGlyph::new(
-                    glyph_name,
-                    BadGlyphKind::MissingMaster(default_master_id.to_string()),
-                )));
-            };
+        let palette = self.font_info.font.default_palette();
+        for (glyph_name, split_glyph_names) in self.font_info.color_glyphs.iter() {
+            let color_glyph = self.get_glyph(glyph_name);
 
-            let paint = if default_layer.shapes.len() == 1 {
+            // Both single glyphs and split glyphs have 1..N shapes with the same paint
+            let paint = if split_glyph_names.is_empty() {
+                Paint::Glyph(create_paint_glyph(palette, default_master_id, color_glyph)?.into())
+            } else if let [glyph_name] = split_glyph_names.as_slice() {
                 Paint::Glyph(
-                    PaintGlyph {
-                        name: color_glyph.name.clone().into(),
-                        paint: to_ir_paint(&glyph_name, &default_layer.shapes[0])?,
-                    }
-                    .into(),
+                    create_paint_glyph(palette, default_master_id, self.get_glyph(glyph_name))?
+                        .into(),
                 )
             } else {
-                warn!(
-                    "multiple color shapes in {}, not yet supported",
-                    color_glyph.name
-                );
-                Paint::Glyph(
-                    PaintGlyph {
-                        name: color_glyph.name.clone().into(),
-                        paint: to_ir_paint(&glyph_name, &default_layer.shapes[0])?,
-                    }
-                    .into(),
-                )
+                let mut layers = Vec::with_capacity(split_glyph_names.len());
+                for glyph_name in split_glyph_names {
+                    layers.push(Paint::Glyph(
+                        create_paint_glyph(palette, default_master_id, self.get_glyph(glyph_name))?
+                            .into(),
+                    ));
+                }
+                Paint::Layers(layers.into())
             };
             graph
                 .base_glyphs
@@ -1728,12 +1780,12 @@ mod tests {
     };
     use fontir::{
         error::Error,
-        ir::{AnchorKind, GlobalMetricsInstance, Glyph, GlyphOrder, NameKey},
+        ir::{AnchorKind, Color, GlobalMetricsInstance, Glyph, GlyphOrder, NameKey},
         orchestration::{Context, Flags, WorkId},
         paths::Paths,
         source::Source,
     };
-    use glyphs_reader::{Font, glyphdata::Category};
+    use glyphs_reader::{AxisRule, Font, glyphdata::Category};
 
     use ir::{Panose, test_helpers::Round2};
     use write_fonts::types::{NameId, Tag};
@@ -3377,6 +3429,40 @@ mod tests {
                 .as_str(),
             "e.BRACKET.varAlt01"
         );
+    }
+
+    #[test]
+    fn bracket_info_include_unspecified_layers() {
+        let axes = Axes::for_test(&["wght", "wdth"]);
+        let mut layer = Layer::default();
+        layer.attributes.axis_rules = vec![
+            AxisRule {
+                min: Some(42),
+                max: None,
+            },
+            Default::default(),
+        ];
+
+        // even though we don't specify anything for the second axis, it should still
+        // be included in the condition set
+        let result = get_bracket_info(&layer, &axes);
+
+        assert_eq!(
+            result,
+            ConditionSet::from_iter([
+                Condition::new(
+                    WGHT,
+                    Some(DesignCoord::new(42.)),
+                    Some(DesignCoord::new(700.))
+                ),
+                Condition::new(
+                    Tag::new(b"wdth"),
+                    // these are the default values defined in the mock axis
+                    Some(DesignCoord::new(75.)),
+                    Some(DesignCoord::new(125.))
+                )
+            ])
+        )
     }
 
     #[test]
