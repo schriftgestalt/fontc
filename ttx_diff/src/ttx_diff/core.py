@@ -37,6 +37,9 @@ Usage:
     # Rebuild with precompiled `fontc` binary and Glyphs 4 and compare.
     python resources/scripts/ttx_diff.py --tool_1_type fontc --tool_1_path ~/fontc/target/release/fontc --tool_2_type glyphsapp --tool_2_path '/Applications/Glyphs 4.0a (3837).app' ../OswaldFont/sources/Oswald.glyphs
 
+    # compare two precompiled fonts directly (no compilation from source)
+    python resources/scripts/ttx_diff.py --font_1 path/to/font_1.ttf --font_2 path/to/font_2.ttf
+
 JSON:
     If the `--json` flag is passed, this tool will output JSON.
 
@@ -211,6 +214,16 @@ flags.DEFINE_bool(
 )
 flags.DEFINE_bool(
     "keep_direction", False, "Preserve contour winding direction from source."
+)
+flags.DEFINE_string(
+    "font_1",
+    default=None,
+    help="Optional path to precompiled font 1. Must be used with --font_2.",
+)
+flags.DEFINE_string(
+    "font_2",
+    default=None,
+    help="Optional path to precompiled font 2. Must be used with --font_1.",
 )
 
 
@@ -1142,7 +1155,6 @@ def allow_some_off_by_ones(fontc, fontmake, container, name_attr, coord_holder):
         name = fontmake_container.attrib[name_attr]
         fontc_container = fontc_items.get(name)
         if fontc_container is None:
-            eprint(f"no item where {name_attr}='{name}' in {container}")
             continue
 
         fontc_els = [el for el in fontc_container.iter() if el.tag == coord_tag]
@@ -1748,31 +1760,28 @@ def resolve_source(source: str, cache_dir: Path) -> Path:
 
 def delete_things_we_must_rebuild(
     rebuild: str,
-    tool_1_name: str,
     font_file_1: Path,
-    tool_2_name: str,
     font_file_2: Path,
+    skip_fonts: bool = False,
 ):
-    # Replace generic rebuild flag with specific tool name.
-    if rebuild == TOOL_1_NAME:
-        rebuild = tool_1_name
-    elif rebuild == TOOL_2_NAME:
-        rebuild = tool_2_name
+    font_files = []
+    if rebuild == TOOL_1_NAME or rebuild == "both":
+        font_files.append(font_file_1)
+    if rebuild == TOOL_2_NAME or rebuild == "both":
+        font_files.append(font_file_2)
 
-    for tool_name, font_file in [
-        (tool_1_name, font_file_1),
-        (tool_2_name, font_file_2),
-    ]:
-        must_rebuild = rebuild in [tool_name, "both"]
-        if must_rebuild:
-            for path in [
-                font_file,
-                font_file.with_suffix(".ttx"),
-                font_file.with_suffix(".markkern.txt"),
-                font_file.with_suffix(".ligcaret.txt"),
-            ]:
-                if path.exists():
-                    os.remove(path)
+    for font_file in font_files:
+        paths = [
+            font_file.with_suffix(".ttx"),
+            font_file.with_suffix(".markkern.txt"),
+            font_file.with_suffix(".ligcaret.txt"),
+        ]
+        if not skip_fonts:
+            paths.append(font_file)
+        for path in paths:
+            if path.exists():
+                print(f"Deleting {rel_user(path)}")
+                os.remove(path)
 
 
 # returns the path to the compiled binary
@@ -1884,12 +1893,14 @@ class FontcTool(Tool):
     _fontc_bin_path: Path = field(init=False, repr=False)
 
     def __post_init__(self):
-        self._fontc_bin_path = get_crate_path(
-            self.fontc_bin_str, self.fontc_repo_root, FONTC_NAME
-        )
-        assert self._fontc_bin_path.is_file(), (
-            f"fontc path '{self._fontc_bin_path}' does not exist"
-        )
+        has_precompiled_fonts = FLAGS.font_1 is not None
+        if not has_precompiled_fonts:
+            self._fontc_bin_path = get_crate_path(
+                self.fontc_bin_str, self.fontc_repo_root, FONTC_NAME
+            )
+            assert self._fontc_bin_path.is_file(), (
+                f"fontc path '{self._fontc_bin_path}' does not exist"
+            )
 
     # Created once, read-only.
     @property
@@ -2030,13 +2041,23 @@ class GlyphsAppTool(Tool):
 
 
 def main(argv):
-    if len(argv) != 2:
+    has_source = len(argv) == 2
+
+    if (FLAGS.font_1 is None) != (FLAGS.font_2 is None):
         sys.exit(
-            "Only one argument, a source file, is expected. Pass the `--help` flag to display usage information and available options."
+            "When using precompiled fonts, both --font_1 and --font_2 must be provided"
         )
 
+    has_precompiled_fonts = FLAGS.font_1 is not None
+
+    if has_precompiled_fonts and has_source:
+        sys.exit("Cannot specify both a source file and precompiled fonts")
+
+    if not has_precompiled_fonts and not has_source:
+        sys.exit("Either a source file or both --font_1 and --font_2 must be provided")
+
     cache_dir = Path(FLAGS.cache_path).expanduser().resolve()
-    source = resolve_source(argv[1], cache_dir).resolve()
+    source = resolve_source(argv[1], cache_dir).resolve() if has_source else None
 
     # Check if we're in the fontc repository (optional - allows building binaries)
     cwd = Path(".").resolve()
@@ -2052,7 +2073,7 @@ def main(argv):
     )
     assert otl_bin_path.is_file(), f"normalizer path '{otl_bin_path}' does not exist"
 
-    if shutil.which(FONTMAKE_NAME) is None:
+    if not has_precompiled_fonts and shutil.which(FONTMAKE_NAME) is None:
         sys.exit("No fontmake")
     if shutil.which(TTX_NAME) is None:
         sys.exit("No ttx")
@@ -2074,7 +2095,7 @@ def main(argv):
     tool_1_type = FLAGS.tool_1_type
     tool_2_type = FLAGS.tool_2_type
     if tool_1_type is None or tool_2_type is None:
-        sys.exit("Must specify two tools")
+        sys.exit("Must specify two tool types, even when comparing precompiled fonts")
 
     # If any of the tools are managed by GFTools, we need to have a config file.
     gftools_tool_types = (ToolType.FONTC_GFTOOLS, ToolType.FONTMAKE_GFTOOLS)
@@ -2149,21 +2170,42 @@ def main(argv):
     font_file_1 = build_dir / font_file_name_1
     font_file_2 = build_dir / font_file_name_2
 
-    # We delete all resources that we have to rebuild. The rest of the script
-    # will assume it can reuse anything that still exists.
-    delete_things_we_must_rebuild(
-        FLAGS.rebuild, tool_1_name, font_file_1, tool_2_name, font_file_2
-    )
-
     failures = {}
 
-    failure_1 = tool_1.run(build_dir, font_file_name_1)
-    failure_2 = tool_2.run(build_dir, font_file_name_2)
+    if has_precompiled_fonts:
+        eprint("Using precompiled fonts:")
+        eprint(f"  font_1: {rel_user(FLAGS.font_1)}")
+        eprint(f"  font_2: {rel_user(FLAGS.font_2)}")
 
-    if failure_1 is not None:
-        failures[TOOL_1_NAME] = failure_1
-    if failure_2 is not None:
-        failures[TOOL_2_NAME] = failure_2
+        font_1_input = Path(FLAGS.font_1).resolve()
+        font_2_input = Path(FLAGS.font_2).resolve()
+
+        if not font_1_input.is_file():
+            sys.exit(f"font 1 not found: {font_1_input}")
+        if not font_2_input.is_file():
+            sys.exit(f"font 2 not found: {font_2_input}")
+
+        # When using precompiled fonts, always clean up and rebuild all derived files
+        if FLAGS.rebuild != "both":
+            eprint(
+                "WARN: --rebuild flag ignored with precompiled fonts (always rebuilds derived files)"
+            )
+        delete_things_we_must_rebuild("both", font_file_1, font_file_2, skip_fonts=True)
+
+        if font_1_input != font_file_1:
+            copy(font_1_input, font_file_1)
+        if font_2_input != font_file_2:
+            copy(font_2_input, font_file_2)
+    else:
+        delete_things_we_must_rebuild(FLAGS.rebuild, font_file_1, font_file_2)
+
+        failure_1 = tool_1.run(build_dir, font_file_name_1)
+        failure_2 = tool_2.run(build_dir, font_file_name_2)
+
+        if failure_1 is not None:
+            failures[TOOL_1_NAME] = failure_1
+        if failure_2 is not None:
+            failures[TOOL_2_NAME] = failure_2
 
     report_errors_and_exit_if_there_were_any(failures)
 

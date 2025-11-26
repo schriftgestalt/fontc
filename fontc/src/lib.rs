@@ -306,6 +306,7 @@ mod tests {
             FontData, FontRead, FontReadWithArgs, FontRef, TableProvider, TableRef,
             tables::{
                 cmap::{Cmap, CmapSubtable},
+                colr::{Colr, Paint, PaintGlyph},
                 cpal::ColorRecord,
                 gasp::GaspRangeBehavior,
                 glyf::{self, CompositeGlyph, CurvePoint, Glyf},
@@ -3654,8 +3655,8 @@ mod tests {
     }
 
     #[test]
-    fn cpal_grayscale() {
-        let result = TestCompile::compile_source("glyphs3/COLRv1-grayscale.glyphs");
+    fn cpal_solid() {
+        let result = TestCompile::compile_source("glyphs3/COLRv1-solid.glyphs");
         let cpal = result.font().cpal().unwrap();
         assert_eq!(
             (
@@ -3663,17 +3664,17 @@ mod tests {
                 2,
                 [
                     ColorRecord {
-                        red: 0,
-                        green: 0,
-                        blue: 0,
+                        red: 177,
+                        green: 216,
+                        blue: 243,
                         alpha: 255
                     },
                     ColorRecord {
-                        red: 64,
-                        green: 64,
-                        blue: 64,
+                        red: 42,
+                        green: 43,
+                        blue: 44,
                         alpha: 255
-                    }
+                    },
                 ]
                 .as_slice()
             ),
@@ -3686,8 +3687,8 @@ mod tests {
     }
 
     #[test]
-    fn cpal_color() {
-        let result = TestCompile::compile_source("glyphs3/COLRv1-simple.glyphs");
+    fn cpal_grayscale() {
+        let result = TestCompile::compile_source("glyphs3/COLRv1-grayscale.glyphs");
         let cpal = result.font().cpal().unwrap();
         assert_eq!(
             (
@@ -3695,15 +3696,47 @@ mod tests {
                 2,
                 [
                     ColorRecord {
-                        red: 0,
-                        green: 0,
-                        blue: 255,
+                        red: 64,
+                        green: 64,
+                        blue: 64,
                         alpha: 255
                     },
+                    ColorRecord {
+                        red: 0,
+                        green: 0,
+                        blue: 0,
+                        alpha: 255
+                    },
+                ]
+                .as_slice()
+            ),
+            (
+                cpal.num_palettes(),
+                cpal.num_palette_entries(),
+                cpal.color_records_array().unwrap().unwrap()
+            )
+        );
+    }
+
+    #[test]
+    fn cpal_gradients() {
+        let result = TestCompile::compile_source("glyphs3/COLRv1-gradient.glyphs");
+        let cpal = result.font().cpal().unwrap();
+        assert_eq!(
+            (
+                1,
+                2,
+                [
                     ColorRecord {
                         red: 255,
                         green: 0,
                         blue: 0,
+                        alpha: 255
+                    },
+                    ColorRecord {
+                        red: 0,
+                        green: 0,
+                        blue: 255,
                         alpha: 255
                     }
                 ]
@@ -3725,9 +3758,107 @@ mod tests {
     }
 
     #[test]
+    fn color_only_if_explicitly_color() {
+        let compile = TestCompile::compile_source("glyphs3/COLRv1-solidnoncolor.glyphs");
+        assert!(compile.font().cpal().is_err());
+        assert!(compile.font().colr().is_err());
+    }
+
+    #[test]
     fn colr_grayscale() {
         let result = TestCompile::compile_source("glyphs3/COLRv1-grayscale.glyphs");
         result.font().colr().unwrap(); // for now just check the table exists
+    }
+
+    fn root_paint<'a>(compile: &TestCompile, colr: Colr<'a>, glyph_name: &str) -> Paint<'a> {
+        let gid = compile.get_gid(glyph_name);
+        let base_glyph_list = colr.base_glyph_list().unwrap().unwrap();
+        let base_glyphs = base_glyph_list.base_glyph_paint_records();
+        let base_glyph = base_glyphs.iter().find(|bg| bg.glyph_id() == gid).unwrap();
+
+        base_glyph
+            .paint(base_glyph_list.offset_data())
+            .expect("A valid paint")
+    }
+
+    fn root_paint_glyph<'a>(
+        compile: &TestCompile,
+        colr: Colr<'a>,
+        glyph_name: &str,
+    ) -> PaintGlyph<'a> {
+        let paint = root_paint(compile, colr, glyph_name);
+        let Paint::Glyph(paint) = paint else {
+            panic!("Expected a PaintGlyph for {glyph_name}, got {paint:#?}");
+        };
+        paint
+    }
+
+    #[test]
+    fn colr_gradient_linear() {
+        let result = TestCompile::compile_source("glyphs3/COLRv1-grayscale.glyphs");
+        let colr = result.font().colr().expect("COLR");
+        assert!(matches!(
+            root_paint_glyph(&result, colr, "A").paint(),
+            Ok(Paint::LinearGradient(_))
+        ));
+    }
+
+    #[test]
+    fn colr_gradient_radial() {
+        let result = TestCompile::compile_source("glyphs3/COLRv1-gradient.glyphs");
+        let colr = result.font().colr().expect("COLR");
+        assert!(matches!(
+            root_paint_glyph(&result, colr, "K").paint(),
+            Ok(Paint::RadialGradient(_))
+        ));
+    }
+
+    #[test]
+    fn colr_cliprun() {
+        let result = TestCompile::compile_source("glyphs3/COLRv1-solid.glyphs");
+        let colr = result.font().colr().unwrap();
+        assert_eq!(
+            vec![(1, 2)],
+            colr.clip_list()
+                .unwrap()
+                .unwrap()
+                .clips()
+                .iter()
+                .map(|c| (c.start_glyph_id().to_u32(), c.end_glyph_id().to_u32()))
+                .collect::<Vec<_>>()
+        )
+    }
+
+    #[test]
+    fn colr_split_not_required() {
+        // Only one paint, no need to split blah.color#
+        let result = TestCompile::compile_source("glyphs3/COLRv1-grayscale.glyphs");
+        assert_eq!(
+            vec![".notdef", "A"],
+            result
+                .fe_context
+                .glyph_order
+                .get()
+                .names()
+                .map(|gn| gn.as_str())
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn colr_split_based_on_paint() {
+        // Only one paint, no need to split
+        let result = TestCompile::compile_source("glyphs3/COLRv1-manyshapes-per-glyph.glyphs");
+        assert_eq!(
+            vec![".notdef", "A", "A.color0", "A.color1"],
+            result
+                .fe_context
+                .glyph_order
+                .get()
+                .names()
+                .map(|gn| gn.as_str())
+                .collect::<Vec<_>>()
+        );
     }
 
     #[rstest]
@@ -4309,5 +4440,20 @@ mod tests {
         assert!(result.fe_context.flags.contains(Flags::FLATTEN_COMPONENTS));
         assert!(!result.fe_context.flags.contains(Flags::ERASE_OPEN_CORNERS));
         // Note: propagate_anchors test removed as that flag doesn't exist yet
+    }
+
+    #[test]
+    fn color_base_glyphs() {
+        let result = TestCompile::compile_source("glyphs3/COLRv1-gradient.glyphs");
+        let colr = result.font().colr().unwrap();
+        assert_eq!(
+            8,
+            colr.base_glyph_list()
+                .expect("A base glyph list")
+                .expect("A valid base glyph list")
+                .base_glyph_paint_records()
+                .iter()
+                .count()
+        );
     }
 }

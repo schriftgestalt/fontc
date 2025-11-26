@@ -6,7 +6,7 @@ use std::{
     path::PathBuf,
 };
 
-use indexmap::IndexSet;
+use indexmap::{IndexMap, IndexSet};
 use kurbo::{Affine, BezPath, PathEl, Point};
 use log::{log_enabled, trace, warn};
 use ordered_float::OrderedFloat;
@@ -1624,7 +1624,7 @@ impl Persistable for ColorPalettes {
     }
 }
 
-impl Persistable for PaintGraph {
+impl Persistable for ColorGlyphs {
     fn read(from: &mut dyn Read) -> Self {
         serde_yaml::from_reader(from).unwrap()
     }
@@ -1940,7 +1940,7 @@ impl Component {
 }
 
 /// Data to inform construction of [CPAL](https://learn.microsoft.com/en-us/typography/opentype/spec/cpal#palette-table-header)
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq, Eq)]
 pub struct ColorPalettes {
     // All palettes have the same number of colors; there is at least one palette with at least one color
     pub palettes: Vec<Vec<Color>>,
@@ -1964,20 +1964,34 @@ impl ColorPalettes {
 
         // Trivial optimization: if there is only one palette we can deduplicate it
         if let [one_palette] = palettes.as_mut_slice() {
-            one_palette.sort();
-            one_palette.dedup();
-        }
-        // Sort for stability in output
-        for p in palettes.iter_mut() {
-            p.sort();
+            // Keep the first occurance in original order to match fontmake
+            let mut seen = HashSet::new();
+            let mut delme = Vec::new();
+            for (i, c) in one_palette.iter().enumerate() {
+                if !seen.insert(c) {
+                    delme.push(i);
+                }
+            }
+
+            for i in delme.into_iter().rev() {
+                one_palette.remove(i);
+            }
         }
 
         Ok(Some(Self { palettes }))
     }
+
+    pub fn index_of(&self, color: Color) -> Option<usize> {
+        if self.palettes.is_empty() {
+            return None;
+        }
+        // Palettes assumed small
+        self.palettes[0].iter().position(|c| *c == color)
+    }
 }
 
 /// We may in time need more than RGBA, but likely not for some years so start simple
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Serialize, Deserialize, Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Color {
     pub r: u8,
     pub g: u8,
@@ -1985,9 +1999,55 @@ pub struct Color {
     pub a: u8,
 }
 
+#[derive(Serialize, Deserialize, Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ColorStop {
+    pub offset: OrderedFloat<f32>,
+    pub color: Color,
+    pub alpha: OrderedFloat<f32>,
+}
+
 /// Data to inform construction of [COLR](https://learn.microsoft.com/en-us/typography/opentype/spec/colr)
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
-pub struct PaintGraph {}
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct ColorGlyphs {
+    pub base_glyphs: IndexMap<GlyphName, Paint>,
+}
+
+/// <https://learn.microsoft.com/en-us/typography/opentype/spec/colr#paint-tables>
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub enum Paint {
+    Glyph(Box<PaintGlyph>),
+    Solid(Box<PaintSolid>),
+    LinearGradient(Box<PaintLinearGradient>),
+    RadialGradient(Box<PaintRadialGradient>),
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct PaintGlyph {
+    pub name: GlyphName,
+    pub paint: Paint,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct PaintSolid {
+    pub color: Color,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct PaintLinearGradient {
+    pub color_line: Vec<ColorStop>,
+    pub p0: Point,
+    pub p1: Point,
+    pub p2: Point,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct PaintRadialGradient {
+    pub color_line: Vec<ColorStop>,
+    pub p0: Point,
+    pub r0: OrderedFloat<f32>,
+    pub p1: Point,
+    pub r1: OrderedFloat<f32>,
+}
 
 #[cfg(test)]
 mod tests {

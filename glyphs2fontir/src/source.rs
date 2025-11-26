@@ -17,11 +17,11 @@ use fontir::{
     error::{BadGlyph, BadGlyphKind, BadSource, Error},
     feature_variations::{NBox, overlay_feature_variations},
     ir::{
-        self, AnchorBuilder, Color, ColorPalettes, Condition, ConditionSet, DEFAULT_VENDOR_ID,
-        GdefCategories, GlobalMetric, GlobalMetrics, GlobalMetricsBuilder, GlyphInstance,
-        GlyphOrder, KernGroup, KernSide, KerningGroups, KerningInstance, MetaTableValues,
-        NameBuilder, NameKey, NamedInstance, PostscriptNames, Rule, StaticMetadata, Substitution,
-        VariableFeature,
+        self, AnchorBuilder, Color, ColorGlyphs, ColorPalettes, Condition, ConditionSet,
+        DEFAULT_VENDOR_ID, GdefCategories, GlobalMetric, GlobalMetrics, GlobalMetricsBuilder,
+        GlyphInstance, GlyphOrder, KernGroup, KernSide, KerningGroups, KerningInstance,
+        MetaTableValues, NameBuilder, NameKey, NamedInstance, Paint, PaintGlyph, PostscriptNames,
+        Rule, StaticMetadata, Substitution, VariableFeature,
     },
     orchestration::{Context, Flags, IrWork, WorkId},
     source::Source,
@@ -42,7 +42,9 @@ use write_fonts::{
     types::{NameId, Tag},
 };
 
-use crate::toir::{FontInfo, design_location, to_ir_contours_and_components, to_ir_features};
+use crate::toir::{
+    FontInfo, design_location, to_ir_contours_and_components, to_ir_features, to_ir_paint,
+};
 
 #[derive(Debug, Clone)]
 pub struct GlyphsIrSource {
@@ -135,11 +137,11 @@ impl Source for GlyphsIrSource {
         }))
     }
 
-    fn create_paint_graph_work(
+    fn create_color_glyphs_work(
         &self,
     ) -> Result<Box<fontir::orchestration::IrWork>, fontir::error::Error> {
-        Ok(Box::new(PaintGraphWork {
-            _font_info: self.font_info.clone(),
+        Ok(Box::new(ColorGlyphsWork {
+            font_info: self.font_info.clone(),
         }))
     }
 
@@ -1380,7 +1382,22 @@ impl Work<Context, WorkId, Error> for GlyphIrWork {
             for (tag, coord) in location.iter() {
                 axis_positions.entry(*tag).or_default().insert(*coord);
             }
-            ir_glyph.try_add_source(&location, instance)?;
+            ir_glyph.try_add_source(&location, instance).map_err(|_| {
+                // It's a duplicate location, but we have more context so pass it on to user
+                BadGlyph::new(
+                    &self.glyph_name,
+                    BadGlyphKind::FrontendSpecific(format!(
+                        "layer {} provided outline at {} but an outline for this location was already defined",
+                        layer.layer_id,
+                        location
+                            .to_design(&font_info.axes)
+                            .iter()
+                            .map(|(t, v)| format!("{}={}", t, v.to_f64()))
+                            .collect::<Vec<_>>()
+                            .join(", "),
+                    )),
+                )
+            })?;
 
             // we only care about anchors from exportable glyphs
             // https://github.com/googlefonts/fontc/issues/1397
@@ -1588,8 +1605,9 @@ impl Work<Context, WorkId, Error> for ColorPaletteWork {
             .flat_map(|g| {
                 g.layers
                     .iter()
+                    .filter(|l| l.attributes.color)
                     .flat_map(|l| l.shapes.iter())
-                    .flat_map(|s| s.attributes().gradient.colors.iter())
+                    .flat_map(|s| s.attributes().colors())
             })
             .map(|c| Color {
                 r: c.r as u8,
@@ -1611,11 +1629,11 @@ impl Work<Context, WorkId, Error> for ColorPaletteWork {
 }
 
 #[derive(Debug)]
-struct PaintGraphWork {
-    _font_info: Arc<FontInfo>,
+struct ColorGlyphsWork {
+    font_info: Arc<FontInfo>,
 }
 
-impl Work<Context, WorkId, Error> for PaintGraphWork {
+impl Work<Context, WorkId, Error> for ColorGlyphsWork {
     fn id(&self) -> WorkId {
         WorkId::PaintGraph
     }
@@ -1628,8 +1646,67 @@ impl Work<Context, WorkId, Error> for PaintGraphWork {
         Access::Variant(WorkId::PaintGraph)
     }
 
-    fn exec(&self, _context: &Context) -> Result<(), Error> {
-        debug!("TODO: actually create paint graph");
+    fn exec(&self, context: &Context) -> Result<(), Error> {
+        let default_master_id = self.font_info.font.default_master().id.as_str();
+
+        let color_glyphs = self
+            .font_info
+            .font
+            .glyphs
+            .values()
+            .filter(|g| {
+                g.layers.iter().filter(|l| l.attributes.color).any(|l| {
+                    l.shapes
+                        .iter()
+                        .any(|s| s.attributes().colors().next().is_some())
+                })
+            })
+            .collect::<Vec<_>>();
+        if color_glyphs.is_empty() {
+            return Ok(());
+        }
+        let mut graph = ColorGlyphs {
+            base_glyphs: IndexMap::with_capacity(color_glyphs.len()),
+        };
+        for color_glyph in color_glyphs {
+            let glyph_name: GlyphName = color_glyph.name.clone().into();
+            let Some(default_layer) = color_glyph
+                .layers
+                .iter()
+                .find(|l| l.layer_id == default_master_id)
+            else {
+                return Err(Error::BadGlyph(BadGlyph::new(
+                    glyph_name,
+                    BadGlyphKind::MissingMaster(default_master_id.to_string()),
+                )));
+            };
+
+            let paint = if default_layer.shapes.len() == 1 {
+                Paint::Glyph(
+                    PaintGlyph {
+                        name: color_glyph.name.clone().into(),
+                        paint: to_ir_paint(&glyph_name, &default_layer.shapes[0])?,
+                    }
+                    .into(),
+                )
+            } else {
+                warn!(
+                    "multiple color shapes in {}, not yet supported",
+                    color_glyph.name
+                );
+                Paint::Glyph(
+                    PaintGlyph {
+                        name: color_glyph.name.clone().into(),
+                        paint: to_ir_paint(&glyph_name, &default_layer.shapes[0])?,
+                    }
+                    .into(),
+                )
+            };
+            graph
+                .base_glyphs
+                .insert(color_glyph.name.clone().into(), paint);
+        }
+        context.paint_graph.set(graph);
         Ok(())
     }
 }
@@ -1866,6 +1943,20 @@ mod tests {
         );
         source
             .create_global_metric_work()
+            .unwrap()
+            .exec(&task_context)
+            .unwrap();
+        (source, context)
+    }
+
+    fn build_color_palettes(glyphs_file: PathBuf) -> (impl Source, Context) {
+        let (source, context) = build_static_metadata(glyphs_file);
+        let task_context = context.copy_for_work(
+            Access::Variant(WorkId::StaticMetadata),
+            Access::Variant(WorkId::ColorPalettes),
+        );
+        source
+            .create_color_palette_work()
             .unwrap()
             .exec(&task_context)
             .unwrap();
@@ -3305,6 +3396,30 @@ mod tests {
                 .copied()
                 .collect::<Vec<_>>(),
             [Tag::new(b"wght")]
+        );
+    }
+
+    #[test]
+    fn unique_colors_in_source_order() {
+        // we used to sort and end up with different ordering than fontmake
+        let (_, context) = build_color_palettes(glyphs3_dir().join("COLRv1-gradient.glyphs"));
+        let colors = context.colors.get();
+        assert_eq!(
+            vec![vec![
+                Color {
+                    r: 255,
+                    g: 0,
+                    b: 0,
+                    a: 255,
+                },
+                Color {
+                    r: 0,
+                    g: 0,
+                    b: 255,
+                    a: 255,
+                }
+            ]],
+            colors.palettes
         );
     }
 }
