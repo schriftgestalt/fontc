@@ -16,14 +16,16 @@ use rayon::{ThreadPoolBuilder, prelude::*};
 mod args;
 mod ci;
 mod error;
+mod run_conf;
 mod target;
+mod tool;
 mod ttx_diff_runner;
 
 use serde::{Serialize, de::DeserializeOwned};
 
 use args::{Args, Commands};
 use error::Error;
-use target::{BuildType, Target};
+use target::Target;
 
 fn main() {
     env_logger::init();
@@ -64,7 +66,6 @@ fn run_all<T: Send, E: Send, Cx: Sync>(
     let counter = AtomicUsize::new(0);
     let currently_running = AtomicUsize::new(0);
     let threadpool = ThreadPoolBuilder::new().build().unwrap();
-
     let results = threadpool.install(|| {
         targets
             .into_par_iter()

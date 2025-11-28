@@ -9,6 +9,15 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
+use crate::{
+    args::DEFAULT_CACHE_DIR,
+    tool::{Tool, ToolManagement, ToolPair, ToolType},
+};
+
+fn default_cache_dir() -> PathBuf {
+    Path::new(DEFAULT_CACHE_DIR).to_path_buf()
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) struct Target {
     /// path to the source repo, relative to the cache dir root
@@ -22,13 +31,8 @@ pub(crate) struct Target {
     is_virtual: bool,
     /// Path to source file, relative to the source_dir
     source: PathBuf,
-    pub(crate) build: BuildType,
-}
 
-#[derive(Clone, Debug, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub(crate) enum BuildType {
-    Default,
-    GfTools,
+    pub(crate) tool_pair: ToolPair,
 }
 
 impl Target {
@@ -38,6 +42,7 @@ impl Target {
         config: impl Into<PathBuf>,
         is_virtual: bool,
         source: impl Into<PathBuf>,
+        tool_pair: ToolPair,
     ) -> Self {
         let mut sha = sha.into();
         let config = config.into();
@@ -55,15 +60,16 @@ impl Target {
             config,
             is_virtual,
             source,
-            build: BuildType::Default,
+            tool_pair,
         }
     }
 
-    pub(crate) fn to_gftools_target(&self) -> Self {
-        Self {
-            build: BuildType::GfTools,
-            ..self.clone()
-        }
+    pub(crate) fn tool_1(&self) -> &Tool {
+        &self.tool_pair.tool_1
+    }
+
+    pub(crate) fn tool_2(&self) -> &Tool {
+        &self.tool_pair.tool_2
     }
 
     /// Invariant: the source path is always in a directory
@@ -99,11 +105,8 @@ impl Target {
 
     // if a target was built in a directory with a sha, the repro command
     // does not need to include that part of the directory, so remove it.
-    fn config_path_stripping_disambiguating_sha_if_necessary(&self) -> String {
-        let mut path = self
-            .config_path(Path::new("~/.fontc_crater_cache"))
-            .display()
-            .to_string();
+    fn config_path_stripping_disambiguating_sha_if_necessary(&self, cache_dir: &Path) -> String {
+        let mut path = self.config_path(cache_dir).display().to_string();
         // NOTE: this relies on the fact that we always trim the sha to 10 chars,
         // both when we create a target and in google-fonts-sources when we
         // create the disambiguated checkout directory.
@@ -120,20 +123,25 @@ impl Target {
     ///
     /// This is unique for each target, and is in the form,
     ///
-    /// {BASE}{source_dir}/{config_stem}/{file_stem}/{build}
+    /// {BASE}{source_dir}/{config_stem}/{file_stem}/{tool_1_name}_{tool_2_name}
     ///
     /// where {source_dir} is the path to the sources/Sources directory of this
-    /// target, relative to the root git cache.
+    /// target, relative to the root git cache, and the tool names include a
+    /// version and build number, if applicable (currently Glyphs app only).
     pub(crate) fn cache_dir(&self, in_dir: &Path) -> PathBuf {
         let config = self.config.file_stem().unwrap_or(OsStr::new("config"));
         let mut result = in_dir.join(self.source_dir());
         result.push(config);
         result.push(self.source.file_stem().unwrap());
-        result.push(self.build.name());
+        result.push(format!(
+            "{}_{}",
+            self.tool_1().versioned_name(),
+            self.tool_2().versioned_name()
+        ));
         result
     }
 
-    pub(crate) fn repro_command(&self, repo_url: &str) -> String {
+    pub(crate) fn repro_command(&self, repo_url: &str, cache_dir: &Path) -> String {
         let repo_url = repo_url.trim();
         let source_path = self.source_path(Path::new(""));
         let rel_source_path = source_path
@@ -144,37 +152,35 @@ impl Target {
         } else {
             Default::default()
         };
+        let tool_1 = self.tool_1();
+        let tool_2 = self.tool_2();
+
         let mut cmd = format!(
             "python3 -m ttx_diff '{repo_url}{sha_part}#{}'",
             rel_source_path.display()
         );
-        if self.build == BuildType::GfTools {
-            cmd.push_str(" --compare gftools");
-            // we hard code this; repro will only work if they're using default
-            // cache location
-            write!(
-                &mut cmd,
-                " --config {}",
-                self.config_path_stripping_disambiguating_sha_if_necessary()
-            )
-            .unwrap();
+        write!(&mut cmd, " --tool_1_type {}", tool_1.unversioned_name()).unwrap();
+        if tool_1.tool_type() == ToolType::GlyphsApp
+            && let Some(tool_path) = &tool_1.bundle_path()
+        {
+            write!(&mut cmd, " --tool_1_path {}", tool_path.display()).unwrap();
+        }
+        write!(&mut cmd, " --tool_2_type {}", tool_2.unversioned_name()).unwrap();
+        if tool_2.tool_type() == ToolType::GlyphsApp
+            && let Some(tool_path) = &tool_2.bundle_path()
+        {
+            write!(&mut cmd, " --tool_2_path {}", tool_path.display()).unwrap();
+        }
+        if tool_1.tool_management() == ToolManagement::ManagedByGfTools
+            || tool_2.tool_management() == ToolManagement::ManagedByGfTools
+        {
+            let config = self.config_path_stripping_disambiguating_sha_if_necessary(cache_dir);
+            write!(&mut cmd, " --config {config}").unwrap();
+        }
+        if cache_dir != default_cache_dir() {
+            write!(&mut cmd, " --cache_path {0}", cache_dir.display()).unwrap();
         }
         cmd
-    }
-}
-
-impl BuildType {
-    pub(crate) fn name(&self) -> &'static str {
-        match self {
-            BuildType::Default => "default",
-            BuildType::GfTools => "gftools",
-        }
-    }
-}
-
-impl Display for BuildType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.name())
     }
 }
 
@@ -188,11 +194,12 @@ impl Display for Target {
 
         write!(
             f,
-            "{} {}?{} ({})",
+            "{} {}?{} ({} + {})",
             config_path.display(),
             self.source.display(),
             self.sha,
-            self.build
+            self.tool_1().versioned_name(),
+            self.tool_2().versioned_name()
         )
     }
 }
@@ -215,7 +222,7 @@ impl<'de> Deserialize<'de> for Target {
 
 /// in the format,
 ///
-/// $ORG/$REPO/$CONFIG_PATH?$SHA $SRC_PATH ($BUILD_TYPE)
+/// $ORG/$REPO/$CONFIG_PATH?$SHA $SRC_PATH ($TOOL_1 + $TOOL_2)
 ///
 /// where a virtual config's $CONFIG_PATH starts with the literal path element
 /// '$VIRTUAL'.
@@ -224,12 +231,7 @@ impl FromStr for Target {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let s = s.trim();
-        // old version contain '($CONFIG.y[a]ml)'
-        if s.contains("ml)") {
-            return legacy_from_str_impl(s);
-        }
-
-        let (head, type_) = s
+        let (head, tools_part) = s
             .rsplit_once('(')
             .ok_or_else(|| "missing opening paren".to_string())?;
 
@@ -255,46 +257,24 @@ impl FromStr for Target {
             (false, config_part)
         };
 
-        let result = Self::new(org_repo, sha, config_path, is_virtual, source);
-        match type_.trim_end_matches(')') {
-            "default" => Ok(result),
-            "gftools" => Ok(result.to_gftools_target()),
-            other => Err(format!("unknown build type '{other}'")),
-        }
-    }
-}
+        let tools_part = tools_part.trim_end_matches(')').trim();
+        let (tool_1_str, tool_2_str) = tools_part
+            .split_once(" + ")
+            .ok_or_else(|| "missing ' + ' separator for tools".to_string())?;
 
-// this can be deleted after the new format has been used twice.
-fn legacy_from_str_impl(s: &str) -> Result<Target, String> {
-    // expect the format, PATH [(config)] (default|gftools)
-    let (head, type_) = s
-        .rsplit_once('(')
-        .ok_or_else(|| "missing opening paren".to_string())?;
+        let tool_pair = ToolPair {
+            tool_1: Tool::from_str(tool_1_str.trim())?,
+            tool_2: Tool::from_str(tool_2_str.trim())?,
+        };
 
-    let head = head.trim();
-
-    // now we may or may not have a config:
-    let (source_part, config_part) = if head.ends_with(')') {
-        let (source, config) = head
-            .rsplit_once('(')
-            .ok_or_else(|| format!("expected '(' in '{head}'"))?;
-        (source.trim(), config.trim_end_matches(')'))
-    } else {
-        (head, "")
-    };
-
-    let (source_part, sha_part) = source_part.rsplit_once('?').unwrap_or((source_part, ""));
-    let source = PathBuf::from(source_part.trim());
-    let repo: PathBuf = source.iter().take(2).collect();
-    let source = source.strip_prefix(&repo).unwrap();
-    let config = source.with_file_name(config_part);
-    let source = source.file_name().unwrap();
-
-    let result = Target::new(repo, sha_part, config, false, source);
-    match type_.trim_end_matches(')') {
-        "default" => Ok(result),
-        "gftools" => Ok(result.to_gftools_target()),
-        other => Err(format!("unknown build type '{other}'")),
+        Ok(Self::new(
+            org_repo,
+            sha,
+            config_path,
+            is_virtual,
+            source,
+            tool_pair,
+        ))
     }
 }
 
@@ -310,13 +290,17 @@ mod tests {
             "sources/config.yaml",
             false,
             "sources/derp.glyphs",
+            ToolPair {
+                tool_1: Tool::Fontc(ToolManagement::Standalone),
+                tool_2: Tool::Fontmake(ToolManagement::Standalone),
+            },
         );
 
         let asstr = target.to_string();
 
         assert_eq!(
             asstr,
-            "googlefonts/derp/sources/config.yaml derp.glyphs?deadbeef (default)"
+            "googlefonts/derp/sources/config.yaml derp.glyphs?deadbeef (fontc + fontmake)"
         );
 
         let der = Target::from_str(&asstr).unwrap();
@@ -331,13 +315,17 @@ mod tests {
             "ofl/derp/config.yaml",
             true,
             "derp.glyphs",
+            ToolPair {
+                tool_1: Tool::Fontc(ToolManagement::Standalone),
+                tool_2: Tool::Fontmake(ToolManagement::Standalone),
+            },
         );
 
         let asstr = target.to_string();
 
         assert_eq!(
             asstr,
-            "googlefonts/derp/$VIRTUAL/ofl/derp/config.yaml derp.glyphs?deadbeef (default)"
+            "googlefonts/derp/$VIRTUAL/ofl/derp/config.yaml derp.glyphs?deadbeef (fontc + fontmake)"
         );
 
         let der = Target::from_str(&asstr).unwrap();
@@ -352,10 +340,18 @@ mod tests {
             "Sources/hmm.yaml",
             false,
             "hello.glyphs",
+            ToolPair {
+                tool_1: Tool::Fontc(ToolManagement::Standalone),
+                tool_2: Tool::Fontmake(ToolManagement::Standalone),
+            },
         );
 
-        let hmm = target.config_path_stripping_disambiguating_sha_if_necessary();
-        assert_eq!(hmm, "~/.fontc_crater_cache/org/repo/Sources/hmm.yaml")
+        let cache_dir = default_cache_dir();
+        let hmm = target.config_path_stripping_disambiguating_sha_if_necessary(&cache_dir);
+        assert_eq!(
+            hmm,
+            format!("{DEFAULT_CACHE_DIR}/org/repo/Sources/hmm.yaml")
+        )
     }
 
     #[test]
@@ -366,12 +362,17 @@ mod tests {
             "sources/config.yaml",
             false,
             "sources/hi.glyphs",
+            ToolPair {
+                tool_1: Tool::Fontc(ToolManagement::Standalone),
+                tool_2: Tool::Fontmake(ToolManagement::Standalone),
+            },
         );
 
-        let hmm = target.repro_command("example.com");
+        let cache_dir = default_cache_dir();
+        let hmm = target.repro_command("example.com", &cache_dir);
         assert_eq!(
             hmm,
-            "python3 -m ttx_diff 'example.com?123456789a#sources/hi.glyphs'"
+            "python3 -m ttx_diff 'example.com?123456789a#sources/hi.glyphs' --tool_1_type fontc --tool_2_type fontmake"
         );
     }
 }

@@ -9,10 +9,13 @@ use std::{
 };
 
 use crate::{
-    BuildType, Target,
+    Target,
+    ci::RunConfiguration,
     error::Error,
+    tool::{Tool, ToolManagement, ToolType},
     ttx_diff_runner::{CompilerFailure, DiffError, DiffOutput, DiffValue},
 };
+
 use maud::{Markup, PreEscaped, html};
 
 use super::{DiffResults, RunSummary};
@@ -27,7 +30,14 @@ struct Annotation {
     link: Option<String>,
 }
 
-pub(super) fn generate(target_dir: &Path) -> Result<(), Error> {
+const TOOL_1_NAME: &str = "tool_1";
+const TOOL_2_NAME: &str = "tool_2";
+
+pub(super) fn generate(
+    target_dir: &Path,
+    cache_dir: &Path,
+    run_configuration: &RunConfiguration,
+) -> Result<(), Error> {
     let summary_path = target_dir.join(super::SUMMARY_FILE);
     let summary: Vec<RunSummary> = crate::try_read_json(&summary_path)?;
     let sources_path = target_dir.join(super::SOURCES_FILE);
@@ -63,11 +73,14 @@ pub(super) fn generate(target_dir: &Path) -> Result<(), Error> {
         prev.as_ref(),
         &failures,
         &annotations,
+        cache_dir,
+        run_configuration,
     )?;
     let outpath = target_dir.join(HTML_FILE);
     crate::try_write_str(&html_text, &outpath)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn make_html(
     summary: &[RunSummary],
     sources: &BTreeMap<PathBuf, String>,
@@ -75,7 +88,18 @@ fn make_html(
     prev: Option<&DiffResults>,
     repo_failures: &BTreeMap<String, String>,
     annotations: &BTreeMap<Target, Vec<Annotation>>,
+    cache_dir: &Path,
+    run_configuration: &RunConfiguration,
 ) -> Result<String, Error> {
+    let tool_1_category_name = run_configuration.tool_1_category_name();
+    let tool_2_category_name = run_configuration.tool_2_category_name();
+    let tool_1_head = format!("{tool_1_category_name} 💥");
+    let tool_2_head = format!("{tool_2_category_name} 💥");
+
+    let tool_1_category_type = run_configuration.tool_1_category_type();
+    let tool_2_category_type = run_configuration.tool_2_category_type();
+    let introduction = make_introduction(&tool_1_category_type, &tool_2_category_type);
+
     let table_body = make_table_body(summary);
     let css = include_str!("../../resources/style.css");
     let table = html! {
@@ -87,8 +111,8 @@ fn make_html(
                     th.identical scope="col" { "identical" }
                     th.total scope="col" { "targets" }
                     th.identical_perc scope="col" { "identical %" }
-                    th.fontc_err scope="col" { "fontc 💥" }
-                    th.fontmake_err scope="col" { "fontmake 💥" }
+                    th.tool_1_err scope="col" { (tool_1_head) }
+                    th.tool_2_err scope="col" { (tool_2_head) }
                     th.both_err scope="col" { "both 💥" }
                     th.other_err scope="col" { "other 💥" }
                     th.diff_erc scope="col" { "similarity %" }
@@ -98,7 +122,15 @@ fn make_html(
         }
     };
     let detailed_report = match prev {
-        Some(prev) => make_detailed_report(current, prev, sources, annotations),
+        Some(prev) => make_detailed_report(
+            current,
+            prev,
+            sources,
+            annotations,
+            cache_dir,
+            &tool_1_category_name,
+            &tool_2_category_name,
+        ),
 
         _ => html!(),
     };
@@ -163,6 +195,9 @@ fn make_html(
     ",
     );
 
+    let tool_1_link_title = format!("{tool_1_category_name} only");
+    let tool_2_link_title = format!("{tool_2_category_name} only");
+
     // used to show popup for adding an annotation
     let raw_modal = PreEscaped(
         r#"
@@ -190,11 +225,7 @@ fn make_html(
             body {
                 h1 { "fontc_crater" }
                 div #explain {
-                    "Compiling all known Google Fonts that have sources with both "
-                    {a href = "https://github.com/googlefonts/fontc" { "fontc" } }
-                    " and "
-                    {a href = "https://github.com/googlefonts/fontmake" { "fontmake" } }
-                    ", comparing the results."
+                    (introduction)
                 }
                 (table)
                 div #explain {
@@ -203,9 +234,9 @@ fn make_html(
                     ", "
                     {a href = "#diff-report" { "per-target diffs" } }
                     ", or compile failures for "
-                    {a href = "#fontc-failures" { "fontc only" } }
+                    {a href = "#tool-1-failures" { (tool_1_link_title) } }
                     ", "
-                    {a href = "#fontmake-failures" { "fontmake only" } }
+                    {a href = "#tool-2-failures" { (tool_2_link_title) } }
                     ", "
                     {a href = "#both-failures" { "both compilers" } }
                 }
@@ -234,6 +265,26 @@ fn tidy_html(raw_html: &str) -> Result<String, Error> {
     tidier::format(raw_html, false, &opts).map_err(Into::into)
 }
 
+fn make_introduction(tool_1_category_type: &ToolType, tool_2_category_type: &ToolType) -> Markup {
+    if tool_1_category_type == tool_2_category_type {
+        let tool_name = tool_1_category_type.name();
+        return html! {
+            "Compiling all known Google Fonts that have compatible sources with two builds of "
+            {a href = (tool_1_category_type.url()) { (tool_name) }}
+            ", comparing the results."
+        };
+    }
+
+    // We have two different tool types.
+    html! {
+        "Compiling all known Google Fonts that have compatible sources with "
+        {a href = (tool_1_category_type.url()) { (tool_1_category_type.name()) }}
+        " and "
+        {a href = (tool_2_category_type.url()) { (tool_2_category_type.name()) }}
+        ", comparing the results."
+    }
+}
+
 fn make_table_body(runs: &[RunSummary]) -> Markup {
     fn make_row(
         run: &RunSummary,
@@ -251,14 +302,14 @@ fn make_table_body(runs: &[RunSummary]) -> Markup {
             prev.map(|p| p.stats.identical as i32),
             More::IsBetter,
         );
-        let fontc_err_diff = make_delta_decoration(
-            run.stats.fontc_failed as i32,
-            prev.map(|p| p.stats.fontc_failed as i32),
+        let tool_1_err_diff = make_delta_decoration(
+            run.stats.tool_1_failed as i32,
+            prev.map(|p| p.stats.tool_1_failed as i32),
             More::IsWorse,
         );
-        let fontmake_err_diff = make_delta_decoration(
-            run.stats.fontmake_failed as i32,
-            prev.map(|p| p.stats.fontmake_failed as i32),
+        let tool_2_err_diff = make_delta_decoration(
+            run.stats.tool_2_failed as i32,
+            prev.map(|p| p.stats.tool_2_failed as i32),
             More::IsWorse,
         );
         let both_err_diff = make_delta_decoration(
@@ -287,15 +338,15 @@ fn make_table_body(runs: &[RunSummary]) -> Markup {
         let short_rev = run.fontc_rev.get(..16).unwrap_or(run.fontc_rev.as_str());
         let err_cells = if is_most_recent {
             html! {
-                td.fontc_err { a href = "#fontc-failures" {  (run.stats.fontc_failed) " " (fontc_err_diff)  } }
-                td.fontmake_err { a href = "#fontmake-failures" {  (run.stats.fontmake_failed) " " (fontmake_err_diff)  } }
+                td.tool_1_err { a href = "#tool-1-failures" {  (run.stats.tool_1_failed) " " (tool_1_err_diff)  } }
+                td.tool_2_err { a href = "#tool-2-failures" {  (run.stats.tool_2_failed) " " (tool_2_err_diff)  } }
                 td.both_err { a href = "#both-failures" {  (run.stats.both_failed) " " (both_err_diff) } }
                 td.other_err { a href = "#other-failures" {  (run.stats.other_failure) " " (other_err_diff)  } }
             }
         } else {
             html! {
-            td.fontc_err {  (run.stats.fontc_failed) " " (fontc_err_diff)  }
-            td.fontmake_err {  (run.stats.fontmake_failed) " " (fontmake_err_diff)  }
+            td.tool_1_err {  (run.stats.tool_1_failed) " " (tool_1_err_diff)  }
+            td.tool_2_err {  (run.stats.tool_2_failed) " " (tool_2_err_diff)  }
             td.both_err {  (run.stats.both_failed) " " (both_err_diff) }
             td.other_err {  (run.stats.other_failure) " " (other_err_diff)  }
             }
@@ -383,11 +434,29 @@ fn make_detailed_report(
     prev: &DiffResults,
     sources: &BTreeMap<PathBuf, String>,
     annotations: &BTreeMap<Target, Vec<Annotation>>,
+    cache_dir: &Path,
+    tool_1_category_name: &str,
+    tool_2_category_name: &str,
 ) -> Markup {
-    let reports = [
-        make_diff_report(current, prev, sources, annotations),
+    let reports = vec![
+        make_diff_report(
+            current,
+            prev,
+            sources,
+            annotations,
+            cache_dir,
+            tool_1_category_name,
+            tool_2_category_name,
+        ),
         make_summary_report(current),
-        make_error_report(current, prev, sources),
+        make_error_report(
+            current,
+            prev,
+            sources,
+            cache_dir,
+            tool_1_category_name,
+            tool_2_category_name,
+        ),
     ];
     html! {
         @for report in reports {
@@ -498,6 +567,9 @@ fn make_diff_report(
     prev: &DiffResults,
     sources: &BTreeMap<PathBuf, String>,
     annotations: &BTreeMap<Target, Vec<Annotation>>,
+    cache_dir: &Path,
+    tool_1_category_name: &str,
+    tool_2_category_name: &str,
 ) -> Markup {
     fn get_total_diff_ratios(results: &DiffResults) -> BTreeMap<&Target, f32> {
         results
@@ -543,11 +615,17 @@ fn make_diff_report(
         }
 
         let repo_url = get_repo_url(target);
-        let ttx_command = target.repro_command(repo_url);
-        let onclick = format!("event.preventDefault(); copyText(\"{ttx_command}\");",);
+        let ttx_command = target.repro_command(repo_url, cache_dir);
+        let onclick = format!("event.preventDefault(); copyText(\"{ttx_command}\");");
         let decoration = make_delta_decoration(*ratio, prev_ratio, More::IsBetter);
         let changed_tag_list = list_different_tables(diff_details).unwrap_or_default();
-        let diff_table = format_diff_report_detail_table(diff_details, prev_details);
+
+        let diff_table = format_diff_report_detail_table(
+            diff_details,
+            prev_details,
+            tool_1_category_name,
+            tool_2_category_name,
+        );
 
         let annotation_list = format_annotations(target, annotations);
 
@@ -633,13 +711,11 @@ fn format_annotations(target: &Target, annotations: &BTreeMap<Target, Vec<Annota
 fn make_target_description(target: &Target) -> Markup {
     let bare_path = target.source_path(Path::new(""));
     let source = bare_path.file_name().unwrap().to_str().unwrap();
-    let annotation = match target.build {
-        BuildType::Default => "default".to_string(),
-        BuildType::GfTools if target.config.file_stem() != Some(OsStr::new("config")) => {
-            format!("gftools, {}", target.config.display())
-        }
-        _ => "gftools".to_string(),
-    };
+    let annotation = format!(
+        "{} + {}",
+        annotation_for_tool(target.tool_1(), target),
+        annotation_for_tool(target.tool_2(), target)
+    );
     html! {
         (source)
             " "
@@ -647,67 +723,88 @@ fn make_target_description(target: &Target) -> Markup {
     }
 }
 
+fn annotation_for_tool(tool: &Tool, target: &Target) -> String {
+    let name = tool.versioned_name();
+
+    match tool.tool_management() {
+        ToolManagement::ManagedByGfTools
+            if target.config.file_stem() != Some(OsStr::new("config")) =>
+        {
+            format!("{}, {}", name, target.config.display())
+        }
+        _ => name.to_string(),
+    }
+}
+
 fn make_error_report(
     current: &DiffResults,
     prev: &DiffResults,
     sources: &BTreeMap<PathBuf, String>,
+    cache_dir: &Path,
+    tool_1_category_name: &str,
+    tool_2_category_name: &str,
 ) -> Markup {
-    let current_fontc = get_compiler_failures(current, "fontc");
-    let prev_fontc = get_compiler_failures(prev, "fontc");
-    let current_fontmake = get_compiler_failures(current, "fontmake");
-    let prev_fontmake = get_compiler_failures(prev, "fontmake");
+    // Generic tool names are used for JSON keys.
+    let current_tool_1 = get_compiler_failures(current, TOOL_1_NAME);
+    let prev_tool_1 = get_compiler_failures(prev, TOOL_1_NAME);
+    let current_tool_2 = get_compiler_failures(current, TOOL_2_NAME);
+    let prev_tool_2 = get_compiler_failures(prev, TOOL_2_NAME);
 
-    let current_both = current_fontc
+    let current_both = current_tool_1
         .keys()
         .copied()
-        .filter(|k| current_fontmake.contains_key(k))
+        .filter(|k| current_tool_2.contains_key(k))
         .collect::<BTreeSet<_>>();
-    let prev_both = prev_fontc
+    let prev_both = prev_tool_1
         .keys()
         .copied()
-        .filter(|k| prev_fontmake.contains_key(k))
+        .filter(|k| prev_tool_2.contains_key(k))
         .collect::<BTreeSet<_>>();
 
     let current_other = get_other_failures(current);
     let prev_other = get_other_failures(prev);
 
-    let fontc = if current_fontc.len() - current_both.len() > 0 {
+    let tool_1 = if current_tool_1.len() - current_both.len() > 0 {
         make_error_report_group(
-            "fontc",
-            current_fontc
+            tool_1_category_name,
+            TOOL_1_NAME,
+            current_tool_1
                 .keys()
                 .copied()
                 .filter(|k| !current_both.contains(k))
-                .map(|k| (k, !prev_fontc.contains_key(k))),
+                .map(|k| (k, !prev_tool_1.contains_key(k))),
             |path| {
-                current_fontc
+                current_tool_1
                     .get(path)
                     .copied()
                     .map(format_compiler_error)
                     .unwrap_or_default()
             },
             sources,
+            cache_dir,
         )
     } else {
         Default::default()
     };
 
-    let fontmake = if current_fontmake.len() - current_both.len() > 0 {
+    let tool_2 = if current_tool_2.len() - current_both.len() > 0 {
         make_error_report_group(
-            "fontmake",
-            current_fontmake
+            tool_2_category_name,
+            TOOL_2_NAME,
+            current_tool_2
                 .keys()
                 .copied()
                 .filter(|k| !current_both.contains(k))
-                .map(|k| (k, !prev_fontmake.contains_key(k))),
+                .map(|k| (k, !prev_tool_2.contains_key(k))),
             |path| {
-                current_fontmake
+                current_tool_2
                     .get(path)
                     .copied()
                     .map(format_compiler_error)
                     .unwrap_or_default()
             },
             sources,
+            cache_dir,
         )
     } else {
         Default::default()
@@ -716,30 +813,32 @@ fn make_error_report(
     let both = if !current_both.is_empty() {
         make_error_report_group(
             "both",
+            "both",
             current_both
                 .iter()
                 .copied()
                 .map(|k| (k, !prev_both.contains(k))),
             |path| {
-                let fontc_err = current_fontc
+                let tool_1_err = current_tool_1
                     .get(path)
                     .copied()
                     .map(format_compiler_error)
                     .unwrap_or_default();
-                let fontmake_err = current_fontmake
+                let tool_2_err = current_tool_2
                     .get(path)
                     .copied()
                     .map(format_compiler_error)
                     .unwrap_or_default();
 
                 html! {
-                    .h5 { "fontc" }
-                    (fontc_err)
-                    .h5 { "fontmake" }
-                    (fontmake_err)
+                    .h5 { (tool_1_category_name) }
+                    (tool_1_err)
+                    .h5 { (tool_2_category_name) }
+                    (tool_2_err)
                 }
             },
             sources,
+            cache_dir,
         )
     } else {
         Default::default()
@@ -747,6 +846,7 @@ fn make_error_report(
 
     let other = if !current_other.is_empty() {
         make_error_report_group(
+            "other",
             "other",
             current_other
                 .keys()
@@ -761,14 +861,15 @@ fn make_error_report(
                 }
             },
             sources,
+            cache_dir,
         )
     } else {
         Default::default()
     };
 
     html! {
-        (fontc)
-        (fontmake)
+        (tool_1)
+        (tool_2)
         (both)
         (other)
     }
@@ -796,7 +897,12 @@ fn list_different_tables(current: &DiffOutput) -> Option<String> {
 }
 
 /// for a given diff, the detailed information on per-table changes
-fn format_diff_report_detail_table(current: &DiffOutput, prev: Option<&DiffOutput>) -> Markup {
+fn format_diff_report_detail_table(
+    current: &DiffOutput,
+    prev: Option<&DiffOutput>,
+    tool_1_category_name: &str,
+    tool_2_category_name: &str,
+) -> Markup {
     let value_decoration = |table: &str, value: DiffValue| -> Markup {
         let prev_value = match prev {
             None => None,
@@ -882,7 +988,20 @@ fn format_diff_report_detail_table(current: &DiffOutput, prev: Option<&DiffOutpu
                                 (value.as_n_of_bytes()) "B " ( {value_decoration(table, value) })
                             }
                         } @else {
-                            td.table_diff_value { (value) " " ( {value_decoration(table, value) }) }
+                            td.table_diff_value {
+                                @match value {
+                                    DiffValue::Ratio(_) => { (value) " " ( {value_decoration(table, value) }) },
+                                    DiffValue::Only(compiler) => {
+                                        // Replace generic `tool_1`/`tool_2`
+                                        // string with actual tool name.
+                                        @if compiler == TOOL_1_NAME {
+                                            (tool_1_category_name) " only"
+                                        } @else {
+                                            (tool_2_category_name) " only"
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -893,13 +1012,16 @@ fn format_diff_report_detail_table(current: &DiffOutput, prev: Option<&DiffOutpu
 
 fn make_error_report_group<'a>(
     group_name: &str,
+    id_prefix: &str,
     paths_and_if_is_new_error: impl Iterator<Item = (&'a Target, bool)>,
     details: impl Fn(&Target) -> Markup,
     sources: &BTreeMap<PathBuf, String>,
+    cache_dir: &Path,
 ) -> Markup {
-    let items = make_error_report_group_items(paths_and_if_is_new_error, details, sources);
+    let items =
+        make_error_report_group_items(paths_and_if_is_new_error, details, sources, cache_dir);
 
-    let elem_id = format!("{group_name}-failures");
+    let elem_id = format!("{id_prefix}-failures");
     html! {
         div.error_report {
             h3 id=(elem_id) { (group_name) " failures" }
@@ -914,6 +1036,7 @@ fn make_error_report_group_items<'a>(
     paths_and_if_is_new_error: impl Iterator<Item = (&'a Target, bool)>,
     details: impl Fn(&Target) -> Markup,
     sources: &BTreeMap<PathBuf, String>,
+    cache_dir: &Path,
 ) -> Markup {
     let get_repo_url = |id: &Target| {
         sources
@@ -923,7 +1046,7 @@ fn make_error_report_group_items<'a>(
     };
     let make_repro_command = |target: &Target| {
         let url = get_repo_url(target);
-        let ttx_command = target.repro_command(url);
+        let ttx_command = target.repro_command(url, cache_dir);
         format!("event.preventDefault(); copyText(\"{ttx_command}\");",)
     };
     html! {
@@ -944,6 +1067,7 @@ fn make_error_report_group_items<'a>(
         }
     }
 }
+
 fn get_other_failures(results: &DiffResults) -> BTreeMap<&Target, &str> {
     results
         .failure
@@ -1031,8 +1155,9 @@ fn get_compiler_failures<'a>(
             return None;
         };
         match compiler {
-            "fontc" => compfail.fontc.as_ref(),
-            "fontmake" => compfail.fontmake.as_ref(),
+            // Generic tool names are used for JSON keys.
+            TOOL_1_NAME => compfail.tool_1.as_ref(),
+            TOOL_2_NAME => compfail.tool_2.as_ref(),
             _ => panic!("this is quite unexpected"),
         }
     };

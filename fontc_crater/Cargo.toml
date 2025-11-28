@@ -12,6 +12,7 @@ fontc = { version = "0.5.0", path = "../fontc" }
 
 google-fonts-sources = "0.10.3"
 maud = "0.27.0"
+plist = "1.2"
 tidier = "0.5.3"
 
 chrono.workspace = true
