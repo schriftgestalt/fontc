@@ -287,9 +287,7 @@ fn names(font: &Font, flags: SelectionFlags) -> HashMap<NameKey, String> {
     }
 
     let vendor = font.vendor_id().unwrap_or(DEFAULT_VENDOR_ID);
-    builder.apply_default_fallbacks(vendor);
-
-    let mut names = builder.into_inner();
+    let mut names = builder.build(vendor);
 
     for (key, lang, value) in font.localized_names() {
         let Some(name_id) = try_name_id(key) else {
@@ -629,9 +627,16 @@ fn condset_to_nbox(condset: ConditionSet, axes: &Axes) -> NBox {
         .iter()
         .filter_map(|cond| {
             let axis = axes.get(&cond.axis)?;
-            // we can filter out conditions with no min/max; missing axes are
-            // treated as being fully included in the box.
-            if cond.min.is_none() && cond.max.is_none() {
+            let axis_min = axis.min.to_design(&axis.converter);
+            let axis_max = axis.max.to_design(&axis.converter);
+            // we can filter out conditions with no min/max, or when min/max are
+            // equal to the axis defaults: these are equivalent and lead to us
+            // generating unnecessary conditions (since by default a missing
+            // axis is treated as fully matching)
+            let cond_min = cond.min.as_ref().unwrap_or(&axis_min);
+            let cond_max = cond.max.as_ref().unwrap_or(&axis_max);
+
+            if (cond_min, cond_max) == (&axis_min, &axis_max) {
                 return None;
             }
             Some((
@@ -2660,6 +2665,14 @@ mod tests {
                 .get(&NameKey::new_bmp_only(NameId::VERSION_STRING))
                 .unwrap()
         );
+    }
+
+    #[test]
+    fn ignore_empty_name() {
+        let font = Font::load(&glyphs3_dir().join("EmptyName.glyphs")).unwrap();
+
+        let names = names(&font, SelectionFlags::empty());
+        assert!(!names.contains_key(&NameKey::new_bmp_only(NameId::TRADEMARK)));
     }
 
     #[test]
