@@ -302,6 +302,16 @@ fn names(font: &Font, flags: SelectionFlags) -> HashMap<NameKey, String> {
         names.insert(name_key, value.to_string());
     }
 
+    for entry in &font.custom_parameters.name_table_entries {
+        let key = NameKey {
+            name_id: NameId::new(entry.name_id),
+            platform_id: entry.platform_id,
+            encoding_id: entry.encoding_id,
+            lang_id: entry.lang_id,
+        };
+        names.insert(key, entry.value.clone());
+    }
+
     names
 }
 
@@ -1826,7 +1836,6 @@ mod tests {
         error::Error,
         ir::{AnchorKind, Color, GlobalMetricsInstance, Glyph, GlyphOrder, NameKey},
         orchestration::{Context, Flags, WorkId},
-        paths::Paths,
         source::Source,
     };
     use glyphs_reader::{AxisRule, Font, glyphdata::Category};
@@ -1884,12 +1893,7 @@ mod tests {
 
     fn context_for(glyphs_file: &Path) -> (impl Source + use<>, Context) {
         let source = GlyphsIrSource::new(glyphs_file).unwrap();
-        let mut flags = Flags::default();
-        flags.set(Flags::EMIT_IR, false); // we don't want to write anything down
-        (
-            source,
-            Context::new_root(flags, Paths::new(Path::new("/nothing/should/write/here"))),
-        )
+        (source, Context::new_root(Flags::default(), None))
     }
 
     #[test]
@@ -2673,6 +2677,25 @@ mod tests {
 
         let names = names(&font, SelectionFlags::empty());
         assert!(!names.contains_key(&NameKey::new_bmp_only(NameId::TRADEMARK)));
+    }
+
+    #[test]
+    fn reads_name_table_entry_custom_param() {
+        let font = Font::load(&glyphs3_dir().join("NameTableEntry.glyphs")).unwrap();
+
+        let names = names(&font, SelectionFlags::empty());
+        let key_ch_tw = NameKey {
+            name_id: NameId::new(16),
+            platform_id: 3,
+            encoding_id: 1,
+            lang_id: 0x404,
+        };
+        assert_eq!(names.get(&key_ch_tw).map(|s| s.as_str()), Some("粉圓"));
+        let key_en_us = NameKey {
+            lang_id: 0x409,
+            ..key_ch_tw
+        };
+        assert_eq!(names.get(&key_en_us).map(|s| s.as_str()), Some("Derp"));
     }
 
     #[test]
