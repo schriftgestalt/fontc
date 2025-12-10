@@ -28,6 +28,26 @@ static ANNOTATIONS_FILE: &str = "annotations.json";
 struct Annotation {
     text: String,
     link: Option<String>,
+    // other targets that this note is relevant to
+    #[serde(default)]
+    also: Vec<Target>,
+}
+
+fn load_annotations(path: &Path) -> Result<BTreeMap<Target, Vec<Annotation>>, Error> {
+    let mut raw: BTreeMap<Target, Vec<Annotation>> = super::load_json_if_exists_else_default(path)?;
+    // if any annotations apply to multiple targets, split them out
+    let to_add = raw
+        .values_mut()
+        .flatten()
+        .flat_map(|note| {
+            let other_targets = std::mem::take(&mut note.also);
+            other_targets.into_iter().map(|targ| (targ, note.clone()))
+        })
+        .collect::<Vec<_>>();
+    for (target, note) in to_add {
+        raw.entry(target).or_default().push(note);
+    }
+    Ok(raw)
 }
 
 const TOOL_1_NAME: &str = "tool_1";
@@ -47,8 +67,7 @@ pub(super) fn generate(
         super::load_json_if_exists_else_default(&sources_path)?;
     let failures: BTreeMap<String, String> =
         super::load_json_if_exists_else_default(&failures_path)?;
-    let annotations: BTreeMap<Target, Vec<Annotation>> =
-        super::load_json_if_exists_else_default(&annotations_path)?;
+    let annotations = load_annotations(&annotations_path)?;
 
     let (current, prev) = match summary.as_slice() {
         [.., prev, current] => {
