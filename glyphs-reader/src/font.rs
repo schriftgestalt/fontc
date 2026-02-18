@@ -18,7 +18,7 @@ use crate::glyphdata::{Category, GlyphData, Subcategory};
 use ascii_plist_derive::FromPlist;
 use fontdrasil::types::WidthClass;
 use indexmap::{IndexMap, IndexSet};
-use kurbo::{Affine, CubicBez, Line, PathSeg, Point, QuadBez, Vec2};
+use kurbo::{Affine, CubicBez, Line, PathSeg, Point, QuadBez};
 use log::{debug, warn};
 use ordered_float::OrderedFloat;
 use regex::Regex;
@@ -311,13 +311,34 @@ impl Glyph {
         )
     }
 
-    pub(crate) fn has_components(&self) -> bool {
+    pub fn has_components(&self) -> bool {
         self.layers
             .iter()
             .chain(self.bracket_layers.iter())
             .flat_map(Layer::components)
             .next()
             .is_some()
+    }
+}
+
+impl fontdrasil::util::CompositeLike for Glyph {
+    fn name(&self) -> SmolStr {
+        self.name.clone()
+    }
+
+    fn has_components(&self) -> bool {
+        Glyph::has_components(self)
+    }
+
+    fn component_names(&self) -> impl Iterator<Item = SmolStr> {
+        self.layers
+            .iter()
+            .chain(self.bracket_layers.iter())
+            .flat_map(|layer| layer.shapes.iter())
+            .filter_map(|shape| match shape {
+                Shape::Path(..) => None,
+                Shape::Component(c) => Some(c.name.clone()),
+            })
     }
 }
 
@@ -512,12 +533,6 @@ impl Layer {
         self.associated_master_id
             .as_deref()
             .unwrap_or(&self.layer_id)
-    }
-
-    /// A key used to identify a bracket layer during anchor propagation
-    pub(crate) fn axis_rules_key(&self) -> Option<String> {
-        (!self.attributes.axis_rules.is_empty())
-            .then(|| format!("{:?} {}", self.attributes.axis_rules, self.master_id()))
     }
 
     pub fn is_intermediate(&self) -> bool {
@@ -753,11 +768,9 @@ impl Shape {
         }
     }
 
-    pub(crate) fn as_smart_component(&self) -> Option<&Component> {
+    pub(crate) fn as_component(&self) -> Option<&Component> {
         match self {
-            Shape::Component(component) if !component.smart_component_values.is_empty() => {
-                Some(component)
-            }
+            Shape::Component(component) => Some(component),
             _ => None,
         }
     }
@@ -1654,16 +1667,6 @@ struct RawAnchor {
 pub struct Anchor {
     pub name: SmolStr,
     pub pos: Point,
-}
-
-impl Anchor {
-    pub(crate) fn is_origin(&self) -> bool {
-        self.name == "*origin"
-    }
-
-    pub(crate) fn origin_delta(&self) -> Option<Vec2> {
-        self.is_origin().then_some(self.pos.to_vec2())
-    }
 }
 
 impl Hash for Anchor {
@@ -3681,16 +3684,27 @@ impl Font {
         // also have bracket layers.
         self.align_bracket_layers();
 
-        // propagate anchors by default unless explicitly set to false
-        if self.custom_parameters.propagate_anchors.unwrap_or(true) {
-            self.propagate_all_anchors();
-        }
+        // Anchor propagation now happens in fontir as a compilation flag.
+        // Preprocessing disabled - anchor propagation now happens in IR.
+        // The PROPAGATE_ANCHORS flag controls this behavior.
+        // See fontir/src/propagate_anchors.rs and fontir/src/glyph.rs
+        //
+        // The two-phase GDEF categories approach breaks the circular dependency:
+        // - Preliminary categories (computed WITHOUT anchor inspection) are used for propagation
+        // - Final categories (computed AFTER propagation WITH anchor inspection) are used for GDEF table
         // if any glyphs reference smart components, convert them to outlines.
         // (see https://glyphsapp.com/learn/smart-components)
         self.instantiate_all_smart_components()?;
 
         // if any glyphs have corner component hints, insert them into the paths
         self.insert_all_corner_components()
+    }
+
+    /// Returns a list of all glyphs, sorted by component depth.
+    ///
+    /// This is also used for bracket layers.
+    pub(crate) fn depth_sorted_composite_glyphs(&self) -> Vec<SmolStr> {
+        fontdrasil::util::depth_sorted_composite_glyphs(&self.glyphs)
     }
 
     /// if a glyph has components that have alternate layers, copy the layer
@@ -3781,13 +3795,13 @@ impl Font {
                     .iter()
                     .flat_map(|layer| layer.components())
                     .any(|comp| {
-                        //https://github.com/googlefonts/glyphsLib/blob/52c982399b/Lib/glyphsLib/builder/components.py#L77
-                        !comp.smart_component_values.is_empty()
-                            && self
-                                .glyphs
-                                .get(&comp.name)
-                                .map(|ref_glyph| !ref_glyph.smart_component_axes.is_empty())
-                                .unwrap_or(false)
+                        // Check the referenced glyph's axes, not the component's
+                        // values. Glyphs.app omits 'piece' when a smart component
+                        // is newly placed without adjusting any slider (glyphsLib#1134).
+                        self.glyphs
+                            .get(&comp.name)
+                            .map(|ref_glyph| !ref_glyph.smart_component_axes.is_empty())
+                            .unwrap_or(false)
                     })
             })
             .cloned()
@@ -3810,10 +3824,14 @@ impl Font {
         // convert the smart components to normal outlines, per-glyph
         for mut glyph in glyphs_with_smart_components {
             for layer in glyph.layers.iter_mut() {
+                // Snapshot the glyph's own explicit anchors which represent the designer's
+                // intent and must not be overridden by interpolated smart component anchors.
+                let explicit_anchor_names: HashSet<SmolStr> =
+                    layer.anchors.iter().map(|a| a.name.clone()).collect();
                 let old_shapes = std::mem::take(&mut layer.shapes);
                 let mut new_shapes = Vec::new();
                 for shape in old_shapes {
-                    if let Some(comp) = shape.as_smart_component()
+                    if let Some(comp) = shape.as_component()
                         && let Some(ref_glyph) = self
                             .glyphs
                             .get(&comp.name)
@@ -3824,20 +3842,33 @@ impl Font {
                             comp.name,
                             glyph.name
                         );
-                        new_shapes.extend(
-                            crate::smart_components::instantiate_for_layer(
-                                layer.master_id(),
-                                comp,
-                                ref_glyph,
-                            )
-                            .map_err(|issue| {
-                                Error::BadSmartComponent {
-                                    glyph: glyph.name.clone(),
-                                    component: comp.name.clone(),
-                                    issue,
-                                }
-                            })?,
-                        );
+                        let instance = crate::smart_components::instantiate_for_layer(
+                            layer.master_id(),
+                            comp,
+                            ref_glyph,
+                        )
+                        .map_err(|issue| Error::BadSmartComponent {
+                            glyph: glyph.name.clone(),
+                            component: comp.name.clone(),
+                            issue,
+                        })?;
+                        new_shapes.extend(instance.shapes);
+                        // Add anchors from smart component, filtering out
+                        // 'mark' anchors used for internal part-to-part connections
+                        // and any that would override the glyph's explicit anchors.
+                        let new_anchors: Vec<_> = instance
+                            .anchors
+                            .into_iter()
+                            .filter(|a| {
+                                !a.name.starts_with('_') && !explicit_anchor_names.contains(&a.name)
+                            })
+                            .collect();
+                        // When duplicates exist among smart component anchors,
+                        // keep the last one (matching Glyphs.app).
+                        let new_names: HashSet<&SmolStr> =
+                            new_anchors.iter().map(|a| &a.name).collect();
+                        layer.anchors.retain(|a| !new_names.contains(&a.name));
+                        layer.anchors.extend(new_anchors);
                     } else {
                         layer.shapes.push(shape);
                     }
@@ -4040,7 +4071,7 @@ mod tests {
 
     use pretty_assertions::assert_eq;
 
-    use kurbo::{Affine, Point, Rect};
+    use kurbo::{Affine, Point, Rect, Vec2};
 
     use rstest::rstest;
     use smol_str::ToSmolStr;
@@ -5585,19 +5616,6 @@ etc;
     }
 
     #[test]
-    fn bracket_layers_where_only_brackets_have_a_component_and_it_has_anchors() {
-        let font = Font::load(&glyphs2_dir().join("AlumniSans-wononly.glyphs")).unwrap();
-        let glyph = font.glyphs.get("won").unwrap();
-
-        assert_eq!(glyph.layers.len(), 2);
-        assert_eq!(glyph.bracket_layers.len(), 2);
-
-        for layer in glyph.layers.iter().chain(glyph.bracket_layers.iter()) {
-            assert_eq!(layer.anchors.len(), 2, "{}", layer.layer_id);
-        }
-    }
-
-    #[test]
     fn glyphs2_weight_class_custom_instance_parameter() {
         // older glyphs sources can use a custom param in the instance
         // in order to pass a custom value for the weight class.
@@ -5787,10 +5805,10 @@ etc;
             ..Default::default()
         };
 
-        let shapes =
+        let instance =
             smart_components::instantiate_for_layer("m01", &default_pos, smart_comp).unwrap();
-        assert_eq!(shapes.len(), 1);
-        shapes[0].clone()
+        assert_eq!(instance.shapes.len(), 1);
+        instance.shapes[0].clone()
     }
 
     #[test]
@@ -5801,6 +5819,30 @@ etc;
 
         assert_eq!(smart_comp.layers[1].layer_id, "m01");
         assert_eq!(shape, smart_comp.layers[1].shapes[0]);
+    }
+
+    // https://github.com/googlefonts/glyphsLib/issues/1134
+    #[test]
+    fn instantiate_smart_component_at_default_empty_values() {
+        let font = Font::load(&glyphs3_dir().join("SmartComponents.glyphs")).unwrap();
+        let smart_comp = font.glyphs.get("_part.shoulder").unwrap();
+
+        // When a smart component is newly placed without adjusting any slider,
+        // Glyphs.app omits the 'piece' attribute, so smart_component_values is empty.
+        let component = Component {
+            name: "_part.shoulder".into(),
+            smart_component_values: BTreeMap::new(),
+            ..Default::default()
+        };
+
+        let instance =
+            smart_components::instantiate_for_layer("m01", &component, smart_comp).unwrap();
+        assert_eq!(instance.shapes.len(), 1);
+
+        // Should produce the same result as explicit default values
+        let shape_with_explicit_defaults =
+            instantiate_shoulder_at(&[("shoulderWidth", 100.), ("crotchDepth", 0.)]);
+        assert_eq!(instance.shapes[0], shape_with_explicit_defaults);
     }
 
     #[test]
@@ -5872,6 +5914,36 @@ etc;
                 Rect::new(500., 200., 550., 400.),
                 Rect::new(500., 0., 550., 100.),
             ]
+        );
+    }
+
+    /// Explicit anchors on a composite glyph must not be overridden by
+    /// interpolated smart component anchors.
+    /// Regression test for <https://github.com/googlefonts/fontc/pull/1892>
+    #[test]
+    fn smart_component_preserves_explicit_anchors() {
+        let font = Font::load(&glyphs3_dir().join("SmartComponentExplicitAnchors.glyphs")).unwrap();
+        let glyph = font.glyphs.get("composite").unwrap();
+        let layer = &glyph.layers[0];
+
+        // The glyph's explicit anchors should survive smart component instantiation
+        let anchor_map: std::collections::HashMap<&str, (f64, f64)> = layer
+            .anchors
+            .iter()
+            .map(|a| (a.name.as_str(), (a.pos.x, a.pos.y)))
+            .collect();
+
+        // These are the glyph's own explicit anchor positions, NOT the smart
+        // component's interpolated values (which would be (250,600) / (250,0)).
+        assert_eq!(
+            anchor_map.get("top"),
+            Some(&(300.0, 700.0)),
+            "explicit 'top' anchor was overridden by smart component"
+        );
+        assert_eq!(
+            anchor_map.get("bottom"),
+            Some(&(300.0, 0.0)),
+            "explicit 'bottom' anchor was overridden by smart component"
         );
     }
 
