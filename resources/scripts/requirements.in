@@ -5,7 +5,16 @@
 # keep fontmake version pinned to ensure output from ttx-diff is stable;
 # the 'repacker' option enables faster GSUB/GPOS serialization via uharfbuzz
 fontmake[repacker]==3.11.0
-# keep gftools pinned as well to ensure ttx-diff output is stable.
+# technically fonttools is in turn a dependency of fontmake but a few of
+# our scripts import it directly, so we list it among the top-level requirements.
+fonttools
+lxml
+cdifflib
+glyphsLib
+# For comparisons using Glyphs:
+pyobjc-core
+pyobjc-framework-Cocoa
+# keep gftools pinned as well to ensure ttx_diff output is stable.
 # 0.9.74 is when experimental support for fontc was added to gftools.
 gftools==0.9.93
 # Some COLR fonts like Kalnia-Glaze require an (undeclared) optional dependency
