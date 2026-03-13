@@ -481,9 +481,9 @@ impl Work<Context, WorkId, Error> for StaticMetadataWork {
         .map_err(Error::VariationModelError)?;
         static_metadata.misc.selection_flags = selection_flags;
         static_metadata.variations = variations;
-        // treat "    " (four spaces) as equivalent to no value; it means
+        // treat  empty string or all spaces as equivalent to no value; it means
         // 'null', per the spec
-        if let Some(vendor_id) = font.vendor_id().filter(|id| *id != "    ") {
+        if let Some(vendor_id) = font.vendor_id().filter(|id| !id.trim().is_empty()) {
             static_metadata.misc.vendor_id =
                 vendor_id.parse().map_err(|cause| Error::InvalidTag {
                     raw_tag: vendor_id.to_owned(),
@@ -2079,6 +2079,47 @@ mod tests {
                     localized_names: Default::default(),
                 },
             ],
+            static_metadata.all_source_axes.clone().into_inner()
+        );
+    }
+
+    // Single-master font with an instance at a different design coord on wght.
+    // The instance-derived mapping (User 400 => Design 100) doesn't cover the
+    // master's design coord (400). The axis should be treated as unmapped since
+    // min == max (degenerate).
+    #[test]
+    fn single_master_with_instance_derived_mapping() {
+        let (source, context) = context_for(&glyphs3_dir().join("SingleMasterWght.glyphs"));
+        let task_context = context.copy_for_work(
+            Access::None,
+            AccessBuilder::new()
+                .variant(WorkId::StaticMetadata)
+                .variant(WorkId::PreliminaryGlyphOrder)
+                .variant(WorkId::PreliminaryGdefCategories)
+                .build(),
+        );
+        source
+            .create_static_metadata_work()
+            .unwrap()
+            .exec(&task_context)
+            .unwrap();
+        let static_metadata = context.static_metadata.get();
+
+        assert_eq!(
+            vec![Axis {
+                name: "Weight".into(),
+                tag: Tag::new(b"wght"),
+                min: UserCoord::new(400.0),
+                default: UserCoord::new(400.0),
+                max: UserCoord::new(400.0),
+                hidden: false,
+                converter: CoordConverter::unmapped(
+                    UserCoord::new(400.0),
+                    UserCoord::new(400.0),
+                    UserCoord::new(400.0),
+                ),
+                localized_names: Default::default(),
+            }],
             static_metadata.all_source_axes.clone().into_inner()
         );
     }

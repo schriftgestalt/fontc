@@ -186,37 +186,28 @@ impl Target {
 
 impl Display for Target {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let config_path = if self.is_virtual {
+        let mut config_path = if self.is_virtual {
             self.repo_dir.join("$VIRTUAL").join(&self.config)
         } else {
             self.repo_dir.join(&self.config)
-        };
+        }
+        .display()
+        .to_string();
+
+        // our directories always have _SHA appended, so strip that.
+        let suffix = format!("_{}", self.sha);
+        if let Some(idx) = config_path.match_indices(suffix.as_str()).next() {
+            config_path.replace_range(idx.0..idx.0 + suffix.len(), "");
+        }
 
         write!(
             f,
-            "{} {}?{} ({} + {})",
-            config_path.display(),
+            "{config_path} {}?{} ({} + {})",
             self.source.display(),
             self.sha,
             self.tool_1().versioned_name(),
             self.tool_2().versioned_name()
         )
-    }
-}
-
-impl Serialize for Target {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        self.to_string().serialize(serializer)
-    }
-}
-
-impl<'de> Deserialize<'de> for Target {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let s: &str = Deserialize::deserialize(deserializer)?;
-        FromStr::from_str(s).map_err(serde::de::Error::custom)
     }
 }
 
@@ -267,6 +258,8 @@ impl FromStr for Target {
             tool_2: Tool::from_str(tool_2_str.trim())?,
         };
 
+        let org_repo = format!("{org_repo}_{sha}");
+
         Ok(Self::new(
             org_repo,
             sha,
@@ -275,6 +268,20 @@ impl FromStr for Target {
             source,
             tool_pair,
         ))
+
+impl Serialize for Target {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.to_string().serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for Target {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s: &str = Deserialize::deserialize(deserializer)?;
+        FromStr::from_str(s).map_err(serde::de::Error::custom)
     }
 }
 
@@ -285,7 +292,7 @@ mod tests {
     #[test]
     fn string_repr_simple() {
         let target = Target::new(
-            "googlefonts/derp",
+            "googlefonts/derp_deadbeef",
             "deadbeef",
             "sources/config.yaml",
             false,
@@ -310,7 +317,7 @@ mod tests {
     #[test]
     fn string_repr_virtual() {
         let target = Target::new(
-            "googlefonts/derp",
+            "googlefonts/derp_deadbeef",
             "deadbeef",
             "ofl/derp/config.yaml",
             true,
